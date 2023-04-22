@@ -19,7 +19,6 @@ fn bounded_u64() {
     use super::Rng;
     use std::collections::BTreeSet;
 
-    let mut count = 0;
     let bound = 256;
     let mut rng = u64::rng(0).in_range(0, bound);
     let mut seen = BTreeSet::new();
@@ -27,7 +26,6 @@ fn bounded_u64() {
     while seen.len() < 256 {
         let x = rng.get();
         assert!(x < bound);
-        count += 1;
         seen.insert(x);
     }
 }
