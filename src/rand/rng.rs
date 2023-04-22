@@ -158,6 +158,12 @@ impl Rng for i128 {
     const MAP: fn(&mut PCGRng) -> Self = |prng| prng.i128();
 }
 
+impl Rng for isize {
+    const BOUND_MAP: fn(&mut PCGRng, Self, Self) -> Self =
+        |prng, low, high| prng.bounded_isize(low, high);
+    const MAP: fn(&mut PCGRng) -> Self = |prng| prng.isize();
+}
+
 impl Rng for f32 {
     const BOUND_MAP: fn(&mut PCGRng, Self, Self) -> Self =
         |prng, low, high| prng.bounded_f32(low, high);
