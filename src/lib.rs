@@ -21,45 +21,133 @@ fn gap(s: usize, n: usize) -> usize {
     (BETA * (s as f64) * n.ln()).powf(0.5) as usize
 }
 
-fn swap<T: Ord>(data: &mut [T], i: usize, j: usize) {
-    if let Some(b) = data.get(j) {
-        if data.get(i) > Some(b) {
-            data.swap(i, j)
+fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
+    let swap = data[a] > data[b];
+    if swap {
+        data.swap(a, b)
+    }
+    swap
+}
+
+fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> usize {
+    swap(data, a, b);
+    0
+}
+
+fn sort_3<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize) -> usize {
+    swap(data, a, b);
+    if swap(data, b, c) {
+        swap(data, a, b);
+    }
+    1
+}
+
+fn sort_4<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize) -> usize {
+    swap(data, a, b);
+    swap(data, c, d);
+    if swap(data, b, c) {
+        swap(data, a, b);
+    }
+    if swap(data, c, d) {
+        swap(data, b, c);
+    }
+    1
+}
+
+fn median_of_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) -> usize {
+    swap(data, a, c);
+    swap(data, b, d);
+    if swap(data, c, d) {
+        data.swap(a, b);
+    }
+    swap(data, b, e);
+    if swap(data, c, e) {
+        swap(data, a, c);
+    } else {
+        swap(data, b, c);
+    }
+    2
+}
+
+fn guess_pivot<T: Ord>(data: &mut [T], k: usize) -> usize {
+    match data.len() {
+        len @ 9.. => {
+            let f = len / 9;
+            let a = 3 * f;
+            let b = 4 * f;
+            let c = 5 * f;
+            let d = 6 * f;
+            for index in a..d {
+                sort_3(data, index - a, index, index + a);
+            }
+            for index in b..c {
+                sort_3(data, index - f, index, index + f);
+            }
+            let k = (k * f) / len;
+            select_nth_small(&mut data[b..c], k);
+            b + k
         }
+        // len @ 5.. => {
+        //     let blocks = len / 5;
+        //     let mut index = 0;
+        //     let (start, end) = (2 * blocks, 3 * blocks);
+        //     for mid in start..end {
+        //         median_of_5(
+        //             data,
+        //             index,
+        //             index + 1,
+        //             mid,
+        //             3 * blocks + index,
+        //             3 * blocks + index + 1,
+        //         );
+        //         index += 2;
+        //     }
+        //     select_nth_small(&mut data[start..end], blocks / 2);
+        //     len / 2
+        // }
+        5.. => {
+            shuffle(data, 5);
+            median_of_5(data, 0, 1, 2, 3, 4)
+        }
+        4 => sort_4(data, 0, 1, 2, 3),
+        3 => sort_3(data, 0, 1, 2),
+        2 => sort_2(data, 0, 1),
+        1 => 0,
+        _ => panic!("median_of_medians: empty slice"),
     }
 }
 
-fn median_of_medians<T: Ord>(data: &mut [T]) -> usize {
-    let (mut index, end) = (0, data.len().min(25));
-    shuffle(data, end);
-    while index + 5 < end {
-        swap(data, index, index + 1);
-        swap(data, index + 2, index + 3);
-        swap(data, index, index + 2);
-        swap(data, index + 1, index + 3);
-        swap(data, index + 2, index + 4);
-        swap(data, index + 1, index + 2);
-        swap(data, index + 2, index + 4);
-        data.swap(index / 5, index + 2);
-        index += 5;
+fn select_nth_small<T: Ord>(data: &mut [T], k: usize) -> &T {
+    match data.len() {
+        5.. => {
+            let k_mom = guess_pivot(data, k);
+            let (u, v) = ternary_partion(data, k_mom);
+            match (u, v) {
+                (u, _) if k < u => select_nth_small(&mut data[..u], k),
+                (_, v) if k > v => select_nth_small(&mut data[v + 1..], k - v - 1),
+                _ => &data[k],
+            }
+        }
+        4 => {
+            sort_4(data, 0, 1, 2, 3);
+            &data[k]
+        }
+        3 => {
+            sort_3(data, 0, 1, 2);
+            &data[k]
+        }
+        2 => {
+            sort_2(data, 0, 1);
+            &data[k]
+        }
+        1 => &data[k],
+        _ => panic!("select from empty slice"),
     }
-
-    swap(data, index, index + 3);
-    swap(data, index + 1, index + 4);
-    swap(data, index, index + 2);
-    swap(data, index + 1, index + 3);
-    swap(data, index, index + 1);
-    swap(data, index + 2, index + 4);
-    swap(data, index + 1, index + 2);
-    swap(data, index + 3, index + 4);
-    swap(data, index + 2, index + 3);
-
-    data.len().min(5) / 2
 }
 
 pub fn select_nth<T: Ord>(mut data: &mut [T], k: usize) -> &T {
-    let (u, v) = select_pivots(data, k);
-    let (a,b,c,d) = if k < data.len() / 2 {
+    let (u, v) = guess_pivots(data, k);
+    let (a, b, c, d) = if k < data.len() / 2 {
         quintary_partition_a(data, u, v)
     } else {
         quintary_partition_b(data, u, v)
@@ -67,35 +155,7 @@ pub fn select_nth<T: Ord>(mut data: &mut [T], k: usize) -> &T {
     todo!()
 }
 
-fn select_nth_small<T: Ord>(mut data: &mut [T], mut k: usize) -> &T {
-    loop {
-        if data.len() > 5 {
-            let m = median_of_medians(data);
-            let (u, v) = ternary_partion(data, m);
-            match (u, v) {
-                (u, _) if k < u => data = &mut data[..u],
-                (_, v) if k > v => {
-                    data = &mut data[v + 1..];
-                    k -= v + 1;
-                }
-                _ => return &data[k],
-            }
-        } else {
-            swap(data, 0, 3);
-            swap(data, 1, 4);
-            swap(data, 0, 2);
-            swap(data, 1, 3);
-            swap(data, 0, 1);
-            swap(data, 2, 4);
-            swap(data, 1, 2);
-            swap(data, 3, 4);
-            swap(data, 2, 3);
-            return &data[k];
-        }
-    }
-}
-
-pub fn select_pivots<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
+pub fn guess_pivots<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
     let len = data.len();
     let s = size(len);
     let g = gap(s, len);
@@ -283,8 +343,13 @@ pub(crate) fn quintary_partition_a<T: Ord>(
         }
     }
     // B5: Cleanup
-
-    todo!()
+    let a = l + i - ph;
+    let b = a + pl - l;
+    let d = r + j - q;
+    let c = d + q - r;
+    data[pl..j + 1].rotate_left(ph - pl);
+    data[i..r + 1].rotate_right(r - q);
+    (a, b, c, d)
 }
 
 pub(crate) fn quintary_partition_b<T: Ord>(
