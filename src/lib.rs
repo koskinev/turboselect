@@ -1,6 +1,10 @@
+#![feature(specialization)]
+
+mod dbg;
 mod rand;
 use std::cmp::Ordering;
 
+use dbg::Dbg;
 pub(crate) use rand::Rng;
 
 #[cfg(test)]
@@ -117,21 +121,25 @@ fn guess_pivot<T: Ord>(data: &mut [T], k: usize) -> usize {
     }
 }
 
-/// Finds the `k`th smallest element in `data`. Returns the `(a, b)` where `a <= k <= b`. 
+/// Finds the `k`th smallest element in `data`. Returns the `(a, b)` where `a <= k <= b`.
 /// After the call, `data` is partitioned into three parts:
 /// - Elements in the range `0..a` are less than the `k`th smallest element
 /// - Elements in the range `a..=b` are equal to the `k`th smallest element
 /// - Elements in the range `b+1..` are greater than the `k`th smallest element
-/// 
+///
 /// # Panics
-/// 
+///
 /// Panics if `k >= data.len()`.
 fn select_nth_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
     assert!(k < data.len());
+    eprintln!("Start select_nth_small: k = {k}, data.len() = {}, data = {:?}", data.len(), Dbg(&data));
     match data.len() {
         5.. => {
             let k_mom = guess_pivot(data, k);
-            match ternary_partion(data, k_mom) {
+            eprintln!("  Selected pivot at index = {k_mom}, data = {:?}", Dbg(&data));
+            let (a, b) = ternary_partion(data, k_mom);
+            eprintln!("  Pivot in the range {a}..={b}, data = {:?}", Dbg(&data));
+            match (a, b) {
                 (a, _) if k < a => select_nth_small(&mut data[..a], k),
                 (_, b) if k > b => {
                     let (u, v) = select_nth_small(&mut data[b + 1..], k - b - 1);

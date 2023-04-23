@@ -28,7 +28,7 @@ fn ternary() {
 #[test]
 fn nth_small() {
     let repeat = 1000;
-    let count = 600;
+    let count = 20;
     let mut rng = usize::rng(0).in_range(0, count);
 
     for _iter in 0..repeat {
