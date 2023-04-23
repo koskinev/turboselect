@@ -1,4 +1,4 @@
-use crate::{sort_3, sort_4, median_of_5, select_nth};
+use crate::{median_of_5, select_nth, sort_3, sort_4};
 
 use super::{select_nth_small, ternary_partion, Rng};
 
@@ -34,11 +34,13 @@ fn nth_small() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
         let k = rng.get();
-        let kth = *select_nth_small(&mut data, k);
+        let (u, v) = select_nth_small(&mut data, k);
+        let uth = data[u];
+        let vth = data[v];
         for (index, elem) in data.iter().enumerate() {
             match index {
-                i if i < k => assert!(elem <= &kth),
-                i if i > k => assert!(elem >= &kth),
+                i if i < k => assert!(elem <= &uth),
+                i if i > k => assert!(elem >= &vth),
                 _ => (),
             }
         }
@@ -74,8 +76,8 @@ fn sort3() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
         sort_3(&mut data, 0, 1, 2);
-        assert!(data[0]<=data[1]);
-        assert!(data[1]<=data[2]);
+        assert!(data[0] <= data[1]);
+        assert!(data[1] <= data[2]);
     }
 }
 
@@ -88,9 +90,9 @@ fn sort4() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
         sort_4(&mut data, 0, 1, 2, 3);
-        assert!(data[0]<=data[1]);
-        assert!(data[1]<=data[2]);
-        assert!(data[2]<=data[3]);
+        assert!(data[0] <= data[1]);
+        assert!(data[1] <= data[2]);
+        assert!(data[2] <= data[3]);
     }
 }
 
@@ -103,9 +105,9 @@ fn median5() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
         median_of_5(&mut data, 0, 1, 2, 3, 4);
-        assert!(data[0]<=data[2]);
-        assert!(data[1]<=data[2]);
-        assert!(data[2]<=data[3]);
-        assert!(data[2]<=data[4]);
+        assert!(data[0] <= data[2]);
+        assert!(data[1] <= data[2]);
+        assert!(data[2] <= data[3]);
+        assert!(data[2] <= data[4]);
     }
 }

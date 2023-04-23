@@ -117,30 +117,60 @@ fn guess_pivot<T: Ord>(data: &mut [T], k: usize) -> usize {
     }
 }
 
-fn select_nth_small<T: Ord>(data: &mut [T], k: usize) -> &T {
+/// Finds the `k`th smallest element in `data`. Returns the `(a, b)` where `a <= k <= b`. 
+/// After the call, `data` is partitioned into three parts:
+/// - Elements in the range `0..a` are less than the `k`th smallest element
+/// - Elements in the range `a..=b` are equal to the `k`th smallest element
+/// - Elements in the range `b+1..` are greater than the `k`th smallest element
+/// 
+/// # Panics
+/// 
+/// Panics if `k >= data.len()`.
+fn select_nth_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
+    assert!(k < data.len());
     match data.len() {
         5.. => {
             let k_mom = guess_pivot(data, k);
-            let (u, v) = ternary_partion(data, k_mom);
-            match (u, v) {
-                (u, _) if k < u => select_nth_small(&mut data[..u], k),
-                (_, v) if k > v => select_nth_small(&mut data[v + 1..], k - v - 1),
-                _ => &data[k],
+            match ternary_partion(data, k_mom) {
+                (a, _) if k < a => select_nth_small(&mut data[..a], k),
+                (_, b) if k > b => {
+                    let (u, v) = select_nth_small(&mut data[b + 1..], k - b - 1);
+                    (b + 1 + u, b + 1 + v)
+                }
+                (u, v) => (u, v),
             }
         }
         4 => {
             sort_4(data, 0, 1, 2, 3);
-            &data[k]
+            let (mut u, mut v) = (0, 3);
+            while data[u] != data[k] {
+                u += 1;
+            }
+            while data[v] != data[k] {
+                v -= 1;
+            }
+            (u, v)
         }
         3 => {
             sort_3(data, 0, 1, 2);
-            &data[k]
+            let (mut u, mut v) = (0, 2);
+            while data[u] != data[k] {
+                u += 1;
+            }
+            while data[v] != data[k] {
+                v -= 1;
+            }
+            (u, v)
         }
         2 => {
             sort_2(data, 0, 1);
-            &data[k]
+            if data[0] == data[1] {
+                (0, 1)
+            } else {
+                (k, k)
+            }
         }
-        1 => &data[k],
+        1 => (k, k),
         _ => panic!("select from empty slice"),
     }
 }
