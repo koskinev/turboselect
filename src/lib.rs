@@ -132,13 +132,13 @@ fn guess_pivot<T: Ord>(data: &mut [T], k: usize) -> usize {
 /// Panics if `k >= data.len()`.
 fn select_nth_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
     assert!(k < data.len());
-    eprintln!("Start select_nth_small: k = {k}, data.len() = {}, data = {:?}", data.len(), Dbg(&data));
+    // eprintln!("Start select_nth_small: k = {k}, data.len() = {}, data = {:?}", data.len(), Dbg(&data));
     match data.len() {
         5.. => {
             let k_mom = guess_pivot(data, k);
-            eprintln!("  Selected pivot at index = {k_mom}, data = {:?}", Dbg(&data));
+            // eprintln!("  Selected pivot at index = {k_mom}, data = {:?}", Dbg(&data));
             let (a, b) = ternary_partion(data, k_mom);
-            eprintln!("  Pivot in the range {a}..={b}, data = {:?}", Dbg(&data));
+            // eprintln!("  Pivot in the range {a}..={b}, data = {:?}", Dbg(&data));
             match (a, b) {
                 (a, _) if k < a => select_nth_small(&mut data[..a], k),
                 (_, b) if k > b => {
@@ -287,11 +287,17 @@ pub fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
             _ => break,
         }
     }
-    let left = &mut data[l..j + 1];
-    left.rotate_left(p - l);
-
-    let right = &mut data[i..r + 1];
-    right.rotate_right(r - q);
+    if p <= j {
+        while p > l {
+            data.swap(l, j);
+            l += 1;
+        }
+    }
+    while q < r {
+        data.swap(i, r);
+        r -= 1;
+        i += 1;
+    }
 
     (l + j + 1 - p, i + r - q - 1)
 }
