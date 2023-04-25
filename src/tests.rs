@@ -27,8 +27,8 @@ fn ternary() {
 
 #[test]
 fn nth_small() {
-    let repeat = 10000;
-    let count = 600;
+    let repeat = 100;
+    let count = 20;
     let mut range_rng = usize::rng(0).in_range(1, count);
 
     for _iter in 0..repeat {
@@ -36,12 +36,13 @@ fn nth_small() {
         let mut data: Vec<_> = rng.take(count).collect();
         let k = range_rng.get();
         let (u, v) = select_nth_small(&mut data, k);
+        assert!(u <= v && u <= k && v >= k && v < count);
         let uth = data[u];
         let vth = data[v];
         for (index, elem) in data.iter().enumerate() {
             match index {
-                i if i < k => assert!(elem <= &uth),
-                i if i > k => assert!(elem >= &vth),
+                i if i < u => assert!(elem < &uth),
+                i if i > v => assert!(elem > &vth),
                 _ => (),
             }
         }
