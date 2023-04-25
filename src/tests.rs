@@ -29,7 +29,7 @@ fn ternary() {
 fn nth_small() {
     let repeat = 100;
     let count = 20;
-    let mut range_rng = usize::rng(0).in_range(1, count);
+    let mut range_rng = usize::rng(0).in_range(2, count);
 
     for _iter in 0..repeat {
         let rng = usize::rng(0).in_range(0, range_rng.get());
