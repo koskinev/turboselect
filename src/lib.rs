@@ -290,6 +290,7 @@ pub fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
     if p <= j {
         while p > l {
             data.swap(l, j);
+            j -= 1;
             l += 1;
         }
     }
