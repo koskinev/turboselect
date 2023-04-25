@@ -279,12 +279,12 @@ pub fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
                     q -= 1;
                 }
             }
+            Ordering::Greater => break,
             Ordering::Equal => {
                 i += 1;
                 j -= 1;
                 break;
             }
-            _ => break,
         }
     }
     if p <= j {
