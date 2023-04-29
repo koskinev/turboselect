@@ -26,11 +26,7 @@ fn gap(s: usize, n: usize) -> usize {
 }
 
 fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
-    let swap = data[a] > data[b];
-    if swap {
-        data.swap(a, b)
-    }
-    swap
+    (data[a] > data[b]).then(|| data.swap(a, b)).is_some()
 }
 
 fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> usize {
@@ -132,7 +128,8 @@ fn guess_pivot<T: Ord>(data: &mut [T], k: usize) -> usize {
 /// Panics if `k >= data.len()`.
 fn select_nth_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
     assert!(k < data.len());
-    // eprintln!("Start select_nth_small: k = {k}, data.len() = {}, data = {:?}", data.len(), Dbg(&data));
+    // eprintln!("Start select_nth_small: k = {k}, data.len() = {}, data = {:?}", data.len(),
+    // Dbg(&data));
     match data.len() {
         5.. => {
             let k_mom = guess_pivot(data, k);
@@ -289,16 +286,22 @@ pub fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
     }
     if p <= j {
         while p > l {
-            data.swap(l, j);
-            j -= 1;
-            l += 1;
+            if !swap(data, l, j) {
+                break;
+            } else {
+                j -= 1;
+                l += 1;
+            }
         }
     }
     if q >= i {
         while q < r {
-            data.swap(i, r);
-            r -= 1;
-            i += 1;
+            if !swap(data, i, r) {
+                break;
+            } else {
+                i += 1;
+                r -= 1;
+            }
         }
     }
 
@@ -320,42 +323,48 @@ pub fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
 /// Panics if `u` or `v` is out of bounds.
 pub(crate) fn quintary_partition_a<T: Ord>(
     data: &mut [T],
-    mut u: usize,
-    mut v: usize,
+    u: usize,
+    v: usize,
 ) -> (usize, usize, usize, usize) {
-    let (mut l, mut r) = (0, data.len() - 1);
-    if data[u] > data[v] {
-        data.swap(l, v);
-        data.swap(r, u);
-    } else {
-        data.swap(l, u);
-        data.swap(r, v);
+    let r = data.len() - 1;
+    match data[u].cmp(&data[v]) {
+        Ordering::Less => {
+            data.swap(0, u);
+            data.swap(r, v);
+        }
+        Ordering::Equal => {
+            let (a, d) = ternary_partion(data, u);
+            return (a, a + 1, a, d);
+        }
+        Ordering::Greater => {
+            data.swap(0, v);
+            data.swap(r, u);
+        }
     }
-    (u, v) = (l, r);
-    let (mut pl, mut ph, mut q) = (1, 1, r - 1);
-    let (mut i, mut j) = (l, r);
+    let (mut l, mut p, mut q) = (1, 1, r - 1);
+    let (mut i, mut j) = (0, r);
     loop {
-        // B2: Increment i until data[i] >= data[u]
+        // B2: Increment i until data[i] >= data[r]
         loop {
             i += 1;
-            if data[i] >= data[v] {
+            if data[i] >= data[r] {
                 break;
             }
-            match data[i].cmp(&data[u]) {
-                Ordering::Greater => data.swap(ph, i),
+            match data[i].cmp(&data[0]) {
+                Ordering::Greater => data.swap(p, i),
                 Ordering::Less => continue,
                 Ordering::Equal => {
-                    data.swap(pl, i);
-                    data.swap(pl, ph);
-                    pl += 1;
+                    data.swap(p, i);
+                    data.swap(l, p);
+                    l += 1;
                 }
             }
-            ph += 1;
+            p += 1;
         }
-        // B3: Decrement j until data[j] < data[v]
+        // B3: Decrement j until data[j] < data[r]
         loop {
             j -= 1;
-            match data[j].cmp(&data[v]) {
+            match data[j].cmp(&data[r]) {
                 Ordering::Greater => continue,
                 Ordering::Less => break,
                 Ordering::Equal => {
@@ -368,20 +377,20 @@ pub(crate) fn quintary_partition_a<T: Ord>(
         // otherwise stop
         if i < j {
             data.swap(i, j);
-            match data[i].cmp(&data[u]) {
+            match data[i].cmp(&data[0]) {
                 Ordering::Greater => {
-                    data.swap(ph, i);
-                    ph += 1;
+                    data.swap(p, i);
+                    p += 1;
                 }
                 Ordering::Equal => {
-                    data.swap(i, ph);
-                    data.swap(pl, ph);
-                    pl += 1;
-                    ph += 1;
+                    data.swap(i, p);
+                    data.swap(l, p);
+                    l += 1;
+                    p += 1;
                 }
                 _ => {}
             }
-            if data[j] == data[v] {
+            if data[j] == data[r] {
                 data.swap(j, q);
                 q -= 1;
             }
@@ -389,20 +398,151 @@ pub(crate) fn quintary_partition_a<T: Ord>(
             break;
         }
     }
-    // B5: Cleanup
-    let a = l + i - ph;
-    let b = a + pl - l;
+
+    // B5: Cleanup. At this point, the pivots are at the ends of the slice and the slice is
+    // partitioned into five parts:
+    //  +-----------------------------+
+    //  | x == data[0]                | ..l
+    //  +-----------------------------+
+    //  | data[0] < data[x] < data[r] | l..p
+    //  +-----------------------------+
+    //  | data[x] < data[0]           | p..=j
+    //  +-----------------------------+
+    //  | data[x] > data[r]           | i..=q
+    //  +-----------------------------+
+    //  | x == data[r]                | q+1..
+    //  +-----------------------------+
+
+    let a = i - p;
+    let b = a + l;
     let d = r + j - q;
     let c = d + q - r;
-    data[pl..j + 1].rotate_left(ph - pl);
-    data[i..r + 1].rotate_right(r - q);
+
+    // Swap the second and the middle parts.
+    for k in 0..(j + 1 - p).min(p - l) {
+        data.swap(l + k, j - k)
+    }
+    // Swap the first and second parts.
+    for k in 0..l.min(j + 1 - p) {
+        data.swap(k, b - k - 1)
+    }
+    // Swap the fourth and fifth parts.
+    for k in 0..(q + 1 - i).min(r - q) {
+        data.swap(i + k, r - k)
+    }
     (a, b, c, d)
 }
 
 pub(crate) fn quintary_partition_b<T: Ord>(
     data: &mut [T],
-    mut u: usize,
-    mut v: usize,
+    u: usize,
+    v: usize,
 ) -> (usize, usize, usize, usize) {
-    todo!()
+    let r = data.len() - 1;
+    match data[u].cmp(&data[v]) {
+        Ordering::Less => {
+            data.swap(0, u);
+            data.swap(r, v);
+        }
+        Ordering::Equal => {
+            let (a, d) = ternary_partion(data, u);
+            return (a, a + 1, a, d);
+        }
+        Ordering::Greater => {
+            data.swap(0, v);
+            data.swap(r, u);
+        }
+    }
+    let (mut p, mut q, mut h) = (1, r - 1, r - 1);
+    let (mut i, mut j) = (0, r);
+    loop {
+        // C2: Increment i until data[i] > data[0]
+        loop {
+            i += 1;
+            match data[i].cmp(&data[0]) {
+                Ordering::Greater => break,
+                Ordering::Less => continue,
+                Ordering::Equal => {
+                    data.swap(p, i);
+                    p += 1;
+                }
+            }
+        }
+        // C3: Decrement j until data[j] <= data[0]
+        loop {
+            j -= 1;
+            if data[j] <= data[0] {
+                break;
+            }
+            match data[j].cmp(&data[r]) {
+                Ordering::Greater => continue,
+                Ordering::Less => {
+                    data.swap(j, q);
+                }
+                Ordering::Equal => {
+                    data.swap(j, q);
+                    data.swap(q, h);
+                    h -= 1;
+                }
+            }
+            q -= 1;
+        }
+        // C4: Exchange data[i] and data[j] if i < j and repeat B2 and B3,
+        // otherwise stop
+        if i < j {
+            data.swap(i, j);
+            if data[i] == data[0] {
+                data.swap(i, p);
+                p += 1;
+            }
+            match data[j].cmp(&data[r]) {
+                Ordering::Less => {
+                    data.swap(j, q);
+                    q -= 1;
+                }
+                Ordering::Equal => {
+                    data.swap(j, q);
+                    data.swap(h, q);
+                    h -= 1;
+                    q -= 1;
+                }
+                _ => {}
+            }
+        } else {
+            break;
+        }
+    }
+
+    // B5: Cleanup. At this point, the pivots are at the ends of the slice and the slice is
+    // partitioned into five parts:
+    //  +-----------------------------+
+    //  | x == data[0]                | ..p
+    //  +-----------------------------+
+    //  | data[x] < data[0]           | p..i
+    //  +-----------------------------+
+    //  | data[x] > data[r]           | i..=q
+    //  +-----------------------------+
+    //  | data[0] < data[x] < data[r] | q+1..=h
+    //  +-----------------------------+
+    //  | x == data[r]                | h+1..
+    //  +-----------------------------+
+
+    let a = i - p;
+    let b = a + p;
+    let d = r + j - q;
+    let c = d + h - r;
+
+    // Swap the middle and fourth parts.
+    for k in 0..(q + 1 - i).min(h - q) {
+        data.swap(i + k, h - k);
+    }
+    // Swap the fourth and last parts.
+    for k in 0..(r - h).min(q + 1 - i) {
+        data.swap(c + k + 1, r - k);
+    }
+    // Swap the first and second parts.
+    for k in 0..p.min(i - p) {
+        data.swap(k, b - k - 1);
+    }
+    (a, b, c, d)
 }
