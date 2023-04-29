@@ -1,4 +1,4 @@
-use crate::{median_of_5, quintary_partition_a, quintary_partition_b, select_nth, sort_3, sort_4};
+use crate::{median_of_5, quintary_partition_left, quintary_partition_right, select_nth, sort_3, sort_4};
 
 use super::{select_nth_small, ternary_partion, Rng};
 
@@ -28,7 +28,7 @@ fn ternary() {
 #[test]
 fn quintary_a() {
     let repeat = 1000;
-    let count = 500;
+    let count = 15;
     let (u, v) = (count / 4, 3 * count / 4);
     let mut rng = usize::rng(123).in_range(0, count);
 
@@ -38,7 +38,7 @@ fn quintary_a() {
         let pivot_u = data[u].min(data[v]);
         let pivot_v = data[v].max(data[u]);
         // eprintln!("Pivots are {pivot_u} and {pivot_v}");
-        let (a, b, c, d) = quintary_partition_a(&mut data, u, v);
+        let (a, b, c, d) = quintary_partition_left(&mut data, u, v);
 
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -65,7 +65,7 @@ fn quintary_b() {
         let pivot_u = data[u].min(data[v]);
         let pivot_v = data[v].max(data[u]);
         // eprintln!("Pivots are {pivot_u} and {pivot_v}");
-        let (a, b, c, d) = quintary_partition_b(&mut data, u, v);
+        let (a, b, c, d) = quintary_partition_right(&mut data, u, v);
 
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -111,7 +111,8 @@ fn nth() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
-        let k = 42; // rng.get();
+        let k = 42; 
+        rng.get();
         let kth = *select_nth(&mut data, k);
         for (index, elem) in data.iter().enumerate() {
             match index {

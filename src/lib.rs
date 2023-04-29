@@ -117,11 +117,11 @@ fn guess_pivot<T: Ord>(data: &mut [T], k: usize) -> usize {
     }
 }
 
-/// Finds the `k`th smallest element in `data`. Returns the `(a, b)` where `a <= k <= b`.
+/// Finds the `k`th smallest element in `data`. Returns the `(a, d)` where `a <= k <= d`.
 /// After the call, `data` is partitioned into three parts:
 /// - Elements in the range `0..a` are less than the `k`th smallest element
-/// - Elements in the range `a..=b` are equal to the `k`th smallest element
-/// - Elements in the range `b+1..` are greater than the `k`th smallest element
+/// - Elements in the range `a..=d` are equal to the `k`th smallest element
+/// - Elements in the range `d+1..` are greater than the `k`th smallest element
 ///
 /// # Panics
 ///
@@ -181,13 +181,24 @@ fn select_nth_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
 }
 
 pub fn select_nth<T: Ord>(mut data: &mut [T], k: usize) -> &T {
-    let (u, v) = guess_pivots(data, k);
-    let (a, b, c, d) = if k < data.len() / 2 {
-        quintary_partition_a(data, u, v)
+    if data.len() < CUT {
+        let (u, _) = select_nth_small(data, k);
+        &data[u]
     } else {
-        quintary_partition_b(data, u, v)
-    };
-    todo!()
+        let (u, v) = guess_pivots(data, k);
+        let (a, b, c, d) = if k < data.len() / 2 {
+            quintary_partition_left(data, u, v)
+        } else {
+            quintary_partition_right(data, u, v)
+        };
+        match k {
+            k if k < a => select_nth(&mut data[..a], k),
+            k if k < b => &data[a],
+            k if k <= c => select_nth(&mut data[b..=c], k - b),
+            k if k <= d => &data[d],
+            k => select_nth(&mut data[d + 1..], k - d - 1),
+        }
+    }    
 }
 
 pub fn guess_pivots<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
@@ -220,14 +231,20 @@ pub fn shuffle<T>(data: &mut [T], count: usize) {
     }
 }
 
-/// Partitions `data` into three parts, using the `k`th element as the pivot. Returns `(a, b)`,
-/// where `a` is the index of the first element equal to the pivot, and `b` is the index of the
+/// Partitions `data` into three parts, using the `k`th element as the pivot. Returns `(a, d)`,
+/// where `a` is the index of the first element equal to the pivot, and `d` is the index of the
 /// last element equal to the pivot.
 ///
-/// After the partitioning:
-/// * The first `a` elements are less than the pivot.
-/// * The next `b - a + 1` elements are equal to the pivot.
-/// * The last `data.len() - b + 1` elements are greater than the pivot.
+/// After the partitioning, the slice is arranged as follows:
+/// ```text
+///  +-----------------------+
+///  | x < data[a]           | ..a
+///  +-----------------------+
+///  | x == data[a]          | a..=d
+///  +-----------------------+
+///  | x > data[d]           | d+1..
+///  +-----------------------+
+/// ```
 ///
 /// # Panics
 ///
@@ -311,17 +328,25 @@ pub fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
 /// Partitions `data` into five parts, using the `u`th and `v`th elements as the pivots. Returns
 /// `(a, b, c, d)` where `0 <= a <= b < c <= d < data.len()`.
 ///
-/// After the partitioning:
-/// * The first `a` elements are less than the first pivot.
-/// * The next `b - a + 1` elements are equal to the first pivot.
-/// * The next `c - b - 1` elements are between the two pivots.
-/// * The next `d - c + 1` elements are equal to the second pivot.
-/// * The last `data.len() - d - 1` elements are greater than the second pivot.
+/// After the partitioning, the slice is arranged as follows:
+/// ```text
+///  +-----------------------+
+///  | x < data[a]           | ..a
+///  +-----------------------+
+///  | x == data[a]          | a..b
+///  +-----------------------+
+///  | data[a] < x < data[d] | b..=c
+///  +-----------------------+
+///  | x == data[d]          | c+1..=d
+///  +-----------------------+
+///  | x > data[d]           | d+1..
+///  +-----------------------+
+/// ```
 ///
 /// # Panics
 ///
 /// Panics if `u` or `v` is out of bounds.
-pub(crate) fn quintary_partition_a<T: Ord>(
+pub(crate) fn quintary_partition_left<T: Ord>(
     data: &mut [T],
     u: usize,
     v: usize,
@@ -433,7 +458,28 @@ pub(crate) fn quintary_partition_a<T: Ord>(
     (a, b, c, d)
 }
 
-pub(crate) fn quintary_partition_b<T: Ord>(
+/// Partitions `data` into five parts, using the `u`th and `v`th elements as the pivots. Returns
+/// `(a, b, c, d)` where `0 <= a <= b < c <= d < data.len()`.
+///
+/// After the partitioning, the slice is arranged as follows:
+/// ```text
+///  +-----------------------+
+///  | x < data[a]           | ..a
+///  +-----------------------+
+///  | x == data[a]          | a..b
+///  +-----------------------+
+///  | data[a] < x < data[d] | b..=c
+///  +-----------------------+
+///  | x == data[d]          | c+1..=d
+///  +-----------------------+
+///  | x > data[d]           | d+1..
+///  +-----------------------+
+/// ```
+///
+/// # Panics
+///
+/// Panics if `u` or `v` is out of bounds.
+pub(crate) fn quintary_partition_right<T: Ord>(
     data: &mut [T],
     u: usize,
     v: usize,
