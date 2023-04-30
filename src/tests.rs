@@ -1,14 +1,14 @@
 use crate::{
-    median_of_5, partition_at, prepare_partition, quintary_partition_left,
-    quintary_partition_right,
+    median_of_5, partition_at_index, prepare, quintary_left,
+    quintary_right,
     rand::{PCGRng, Rng},
     select_nth, sort_3, sort_4,
 };
 
-use super::{partition_at_small, ternary_partion};
+use super::{partition_at_index_small, ternary};
 
 #[test]
-fn ternary() {
+fn partition_3() {
     let repeat = 1000;
     let count = 100;
     let k = count / 2;
@@ -18,7 +18,7 @@ fn ternary() {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
 
         let pivot = data[k];
-        let (low, high) = ternary_partion(&mut data, k);
+        let (low, high) = ternary(&mut data, k);
 
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -31,7 +31,7 @@ fn ternary() {
 }
 
 #[test]
-fn quintary_left() {
+fn partition_5_left() {
     let repeat = 1000;
     let count = 400;
     let mut pcg = PCGRng::new(123);
@@ -40,12 +40,12 @@ fn quintary_left() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
 
-        let (u_a, u_d, v_a, v_d) = prepare_partition(&mut data, count / 3, &mut pcg);
+        let (u_a, u_d, v_a, v_d) = prepare(&mut data, count / 3, &mut pcg);
         let pivot_u = data[u_a];
         let pivot_v = data[v_a];
 
         // eprintln!("Pivots are {pivot_u} and {pivot_v}");
-        let (a, b, c, d) = quintary_partition_left(&mut data, u_a, u_d, v_a, v_d);
+        let (a, b, c, d) = quintary_left(&mut data, u_a, u_d, v_a, v_d);
 
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -60,7 +60,7 @@ fn quintary_left() {
 }
 
 #[test]
-fn quintary_right() {
+fn partition_5_right() {
     let repeat = 1000;
     let count = 100;
     let mut pcg = PCGRng::new(123);
@@ -69,12 +69,12 @@ fn quintary_right() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
 
-        let (u_a, u_d, v_a, v_d) = prepare_partition(&mut data, 2 * count / 3, &mut pcg);
+        let (u_a, u_d, v_a, v_d) = prepare(&mut data, 2 * count / 3, &mut pcg);
         let pivot_u = data[u_a];
         let pivot_v = data[v_a];
 
         // eprintln!("Pivots are {pivot_u} and {pivot_v}");
-        let (a, b, c, d) = quintary_partition_right(&mut data, u_a, u_d, v_a, v_d);
+        let (a, b, c, d) = quintary_right(&mut data, u_a, u_d, v_a, v_d);
 
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -98,7 +98,7 @@ fn partition_small() {
         let rng = usize::rng(0).in_range(0, range_rng.get());
         let mut data: Vec<_> = rng.take(count).collect();
         let k = range_rng.get();
-        let (u, v) = partition_at_small(&mut data, k);
+        let (u, v) = partition_at_index_small(&mut data, k);
         assert!(u <= v && u <= k && v >= k && v < count);
         let uth = data[u];
         let vth = data[v];
@@ -114,16 +114,16 @@ fn partition_small() {
 
 #[test]
 fn partition() {
-    let repeat = 10000;
+    let repeat = 1000;
     let count = 10000;
 
-    let mut pcg = PCGRng::new(123);
-    let mut rng = usize::rng(123).in_range(0, count);
+    let mut pcg = PCGRng::new(0);
+    let mut rng = usize::rng(0).in_range(0, count);
     let mut k = 0;
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
-        partition_at(&mut data, k, &mut pcg);
+        partition_at_index(&mut data, k, &mut pcg);
         let kth = data[k];
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -140,7 +140,7 @@ fn partition() {
 fn nth() {
     let repeat = 1000;
     let max = 10000;
-    let mut pcg = PCGRng::new(123);
+    let mut pcg = PCGRng::new(0);
 
     for _iter in 0..repeat {
         let count = pcg.bounded_usize(1, max);

@@ -14,46 +14,6 @@ const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
 const CUT: usize = 600;
 
-fn sample_size(n: usize) -> usize {
-    let n = n as f64;
-    let f = n.powf(2. / 3.) * n.ln().powf(1. / 3.);
-    (ALPHA * f).ceil().min(n - 1.) as usize
-}
-
-fn pivot_gap(s: usize, n: usize) -> usize {
-    let n = n as f64;
-    (BETA * (s as f64) * n.ln()).powf(0.5) as usize
-}
-
-fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
-    (data[a] > data[b]).then(|| data.swap(a, b)).is_some()
-}
-
-fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> usize {
-    swap(data, a, b);
-    0
-}
-
-fn sort_3<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize) -> usize {
-    swap(data, a, b);
-    if swap(data, b, c) {
-        swap(data, a, b);
-    }
-    1
-}
-
-fn sort_4<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize) -> usize {
-    swap(data, a, b);
-    swap(data, c, d);
-    if swap(data, b, c) {
-        swap(data, a, b);
-    }
-    if swap(data, c, d) {
-        swap(data, b, c);
-    }
-    1
-}
-
 fn median_of_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) -> usize {
     swap(data, a, c);
     swap(data, b, d);
@@ -69,7 +29,7 @@ fn median_of_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e
     c
 }
 
-fn partition_first<T: Ord>(data: &mut [T]) -> (usize, usize) {
+fn partition_at_first<T: Ord>(data: &mut [T]) -> (usize, usize) {
     let mut d = 0;
     for i in 1..data.len() {
         match data[i].cmp(&data[0]) {
@@ -87,7 +47,7 @@ fn partition_first<T: Ord>(data: &mut [T]) -> (usize, usize) {
     (0, d)
 }
 
-fn partition_last<T: Ord>(data: &mut [T]) -> (usize, usize) {
+fn partition_at_last<T: Ord>(data: &mut [T]) -> (usize, usize) {
     let r = data.len() - 1;
     let mut a = r;
     for i in (0..r).rev() {
@@ -106,27 +66,35 @@ fn partition_last<T: Ord>(data: &mut [T]) -> (usize, usize) {
     (a, r)
 }
 
-fn partition_at<T: Ord>(data: &mut [T], index: usize, rng: &mut PCGRng) -> (usize, usize) {
-    if index == 0 {
-        partition_first(data)
-    } else if index == data.len() - 1 {
-        partition_last(data)
-    } else if data.len() < CUT {
-        let (a, d) = partition_at_small(data, index);
-        (a, d)
-    } else {
-        let (u_a, u_d, v_a, v_d) = prepare_partition(data, index, rng);
-        let (a, b, c, d) = if index < data.len() / 2 {
-            quintary_partition_left(data, u_a, u_d, v_a, v_d)
+fn partition_at_index<T: Ord>(mut data: &mut [T], mut index: usize, rng: &mut PCGRng) -> (usize, usize) {
+    loop {
+        if index == 0 {
+            return partition_at_first(data);
+        } else if index == data.len() - 1 {
+            return partition_at_last(data);
+        } else if data.len() < CUT {
+            let (a, d) = partition_at_index_small(data, index);
+            return (a, d);
         } else {
-            quintary_partition_right(data, u_a, u_d, v_a, v_d)
-        };
-        match index {
-            k if b <= k && k <= c => partition_at(&mut data[b..=c], k - b, rng),
-            k if k < a => partition_at(&mut data[..a], k, rng),
-            k if a <= k && k < b => (a, b - 1),
-            k if c < k && k <= d => (c + 1, d),
-            k => partition_at(&mut data[d + 1..], k - d - 1, rng),
+            let (u_a, u_d, v_a, v_d) = prepare(data, index, rng);
+            let (a, b, c, d) = if index < data.len() / 2 {
+                quintary_left(data, u_a, u_d, v_a, v_d)
+            } else {
+                quintary_right(data, u_a, u_d, v_a, v_d)
+            };
+            if index < a {
+                data = &mut data[..a];
+            } else if index < b {
+                return (a, b - 1);
+            } else if index <= c {
+                data = &mut data[b..=c];
+                index -= b;
+            } else if index <= d {
+                return (c + 1, d);
+            } else {
+                data = &mut data[d + 1..];
+                index -= d + 1;
+            }
         }
     }
 }
@@ -140,7 +108,7 @@ fn partition_at<T: Ord>(data: &mut [T], index: usize, rng: &mut PCGRng) -> (usiz
 /// # Panics
 ///
 /// Panics if `k >= data.len()`.
-fn partition_at_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
+fn partition_at_index_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
     assert!(k < data.len());
     // eprintln!(
     //     "Start select_nth_small: k = {k}, data.len() = {}",
@@ -148,18 +116,18 @@ fn partition_at_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
     // );
     match data.len() {
         len @ 5.. => match k {
-            0 => partition_first(data),
-            k if k == len - 1 => partition_last(data),
+            0 => partition_at_first(data),
+            k if k == len - 1 => partition_at_last(data),
             _ => {
                 let c = len / 2;
                 let b = c / 2;
                 let d = c + b;
                 median_of_5(data, 0, b, c, d, len - 1);
-                let (a, d) = ternary_partion(data, c);
+                let (a, d) = ternary(data, c);
                 match k {
-                    k if k < a => partition_at_small(&mut data[..a], k),
+                    k if k < a => partition_at_index_small(&mut data[..a], k),
                     k if k > d => {
-                        let (u, v) = partition_at_small(&mut data[d + 1..], k - d - 1);
+                        let (u, v) = partition_at_index_small(&mut data[d + 1..], k - d - 1);
                         (d + 1 + u, d + 1 + v)
                     }
                     _ => (a, d),
@@ -201,7 +169,12 @@ fn partition_at_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
     }
 }
 
-fn prepare_partition<T: Ord>(
+fn pivot_gap(s: usize, n: usize) -> usize {
+    let n = n as f64;
+    (BETA * (s as f64) * n.ln()).powf(0.5) as usize
+}
+
+fn prepare<T: Ord>(
     data: &mut [T],
     index: usize,
     rng: &mut PCGRng,
@@ -216,9 +189,9 @@ fn prepare_partition<T: Ord>(
     // let u = (((k + 1) * s + len - 1) / len).saturating_sub(g + 1);
     // let v = (((k + 1) * s + len - 1) / len + g).min(s - 1);
 
-    let (v_a, v_d) = partition_at(&mut data[..s], v, rng);
+    let (v_a, v_d) = partition_at_index(&mut data[..s], v, rng);
     if u < v_a {
-        let (u_a, u_d) = partition_at(&mut data[..v_a], u, rng);
+        let (u_a, u_d) = partition_at_index(&mut data[..v_a], u, rng);
         let q = len - s + v_a;
         for k in 0..s - v_a {
             data.swap(v_a + k, q + k);
@@ -227,116 +200,6 @@ fn prepare_partition<T: Ord>(
     } else {
         (v_a, v_d, v_a, v_d)
     }
-}
-
-pub fn select_nth<T: Ord>(data: &mut [T], index: usize) -> &T {
-    if data.len() < CUT {
-        partition_at_small(data, index);
-    } else {
-        let mut rng = PCGRng::new(data.as_ptr() as u64);
-        partition_at(data, index, &mut rng);
-    }
-    &data[index]
-}
-
-/// Swaps elements in the range `..count`, with a random element in the range `index..count`,
-/// where `index` is the index of the element.
-fn shuffle<T>(data: &mut [T], count: usize, rng: &mut PCGRng) {
-    let len = data.len();
-    for i in 0..count {
-        let j = rng.bounded_usize(i, len);
-        data.swap(i, j);
-    }
-}
-
-/// Partitions `data` into three parts, using the `k`th element as the pivot. Returns `(a, d)`,
-/// where `a` is the index of the first element equal to the pivot, and `d` is the index of the
-/// last element equal to the pivot.
-///
-/// After the partitioning, the slice is arranged as follows:
-/// ```text
-///  ┌────────────────┐
-///  │ x < data[a]    │ x == data[i] where i in ..a
-///  ├────────────────┤
-///  │ x == data[a]   │ i in a..=d
-///  ├────────────────┤
-///  │ x > data[d]    │ i in d+1..
-///  └────────────────┘
-/// ```
-///
-/// # Panics
-///
-/// Panics if `k` is out of bounds.
-fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
-    if data.len() == 1 {
-        assert!(k == 0);
-        return (0, 0);
-    }
-    data.swap(0, k);
-    k = 0;
-    let (mut l, mut r) = (0, data.len() - 1);
-    let (mut p, mut q) = (1, r - 1);
-    let (mut i, mut j) = (l, r);
-    match data[k].cmp(&data[r]) {
-        Ordering::Less => r = q,
-        Ordering::Greater => {
-            data.swap(l, r);
-            l = p;
-            k = r;
-        }
-        _ => {}
-    }
-    loop {
-        i += 1;
-        j -= 1;
-        while data[i] < data[k] {
-            i += 1;
-        }
-        while data[j] > data[k] {
-            j -= 1;
-        }
-        match i.cmp(&j) {
-            Ordering::Less => {
-                data.swap(i, j);
-                if data[i] == data[k] {
-                    data.swap(p, i);
-                    p += 1;
-                }
-                if data[j] == data[k] {
-                    data.swap(q, j);
-                    q -= 1;
-                }
-            }
-            Ordering::Greater => break,
-            Ordering::Equal => {
-                i += 1;
-                j -= 1;
-                break;
-            }
-        }
-    }
-    if p <= j {
-        while p > l {
-            if !swap(data, l, j) {
-                break;
-            } else {
-                j -= 1;
-                l += 1;
-            }
-        }
-    }
-    if q >= i {
-        while q < r {
-            if !swap(data, i, r) {
-                break;
-            } else {
-                i += 1;
-                r -= 1;
-            }
-        }
-    }
-
-    (l + j + 1 - p, i + r - q - 1)
 }
 
 /// Partitions `data` into five parts, using the `u`th and `v`th elements as the pivots. Returns
@@ -360,7 +223,7 @@ fn ternary_partion<T: Ord>(data: &mut [T], mut k: usize) -> (usize, usize) {
 /// # Panics
 ///
 /// Panics if `u` or `v` is out of bounds.
-fn quintary_partition_left<T: Ord>(
+fn quintary_left<T: Ord>(
     data: &mut [T],
     u_a: usize,
     u_d: usize,
@@ -368,7 +231,7 @@ fn quintary_partition_left<T: Ord>(
     v_d: usize,
 ) -> (usize, usize, usize, usize) {
     if data[u_a] == data[v_a] {
-        let (a, d) = ternary_partion(data, u_d);
+        let (a, d) = ternary(data, u_d);
         return (a, d + 1, d, d);
     }
     let s = u_a;
@@ -522,7 +385,7 @@ fn quintary_partition_left<T: Ord>(
 /// # Panics
 ///
 /// Panics if `u` or `v` is out of bounds.
-fn quintary_partition_right<T: Ord>(
+fn quintary_right<T: Ord>(
     data: &mut [T],
     u_a: usize,
     u_d: usize,
@@ -530,7 +393,7 @@ fn quintary_partition_right<T: Ord>(
     v_d: usize,
 ) -> (usize, usize, usize, usize) {
     if data[u_a] == data[v_a] {
-        let (a, d) = ternary_partion(data, u_d);
+        let (a, d) = ternary(data, u_d);
         return (a, d + 1, d, d);
     }
     let s = u_a;
@@ -630,4 +493,149 @@ fn quintary_partition_right<T: Ord>(
         data.swap(s + k, b - k - 1);
     }
     (a, b, c, d)
+}
+
+fn sample_size(n: usize) -> usize {
+    let n = n as f64;
+    let f = n.powf(2. / 3.) * n.ln().powf(1. / 3.);
+    (ALPHA * f).ceil().min(n - 1.) as usize
+}
+
+pub fn select_nth<T: Ord>(data: &mut [T], index: usize) -> &T {
+    if data.len() < CUT {
+        partition_at_index_small(data, index);
+    } else {
+        let mut rng = PCGRng::new(data.as_ptr() as u64);
+        partition_at_index(data, index, &mut rng);
+    }
+    &data[index]
+}
+
+/// Swaps elements in the range `..count`, with a random element in the range `index..count`,
+/// where `index` is the index of the element.
+fn shuffle<T>(data: &mut [T], count: usize, rng: &mut PCGRng) {
+    let len = data.len();
+    for i in 0..count {
+        let j = rng.bounded_usize(i, len);
+        data.swap(i, j);
+    }
+}
+
+fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> usize {
+    swap(data, a, b);
+    0
+}
+
+fn sort_3<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize) -> usize {
+    swap(data, a, b);
+    if swap(data, b, c) {
+        swap(data, a, b);
+    }
+    1
+}
+
+fn sort_4<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize) -> usize {
+    swap(data, a, b);
+    swap(data, c, d);
+    if swap(data, b, c) {
+        swap(data, a, b);
+    }
+    if swap(data, c, d) {
+        swap(data, b, c);
+    }
+    1
+}
+
+fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
+    (data[a] > data[b]).then(|| data.swap(a, b)).is_some()
+}
+
+/// Partitions `data` into three parts, using the `k`th element as the pivot. Returns `(a, d)`,
+/// where `a` is the index of the first element equal to the pivot, and `d` is the index of the
+/// last element equal to the pivot.
+///
+/// After the partitioning, the slice is arranged as follows:
+/// ```text
+///  ┌────────────────┐
+///  │ x < data[a]    │ x == data[i] where i in ..a
+///  ├────────────────┤
+///  │ x == data[a]   │ i in a..=d
+///  ├────────────────┤
+///  │ x > data[d]    │ i in d+1..
+///  └────────────────┘
+/// ```
+///
+/// # Panics
+///
+/// Panics if `index` is out of bounds.
+fn ternary<T: Ord>(data: &mut [T], mut index: usize) -> (usize, usize) {
+    if data.len() == 1 {
+        assert!(index == 0);
+        return (0, 0);
+    }
+    data.swap(0, index);
+    index = 0;
+    let (mut l, mut r) = (0, data.len() - 1);
+    let (mut p, mut q) = (1, r - 1);
+    let (mut i, mut j) = (l, r);
+    match data[index].cmp(&data[r]) {
+        Ordering::Less => r = q,
+        Ordering::Greater => {
+            data.swap(l, r);
+            l = p;
+            index = r;
+        }
+        _ => {}
+    }
+    loop {
+        i += 1;
+        j -= 1;
+        while data[i] < data[index] {
+            i += 1;
+        }
+        while data[j] > data[index] {
+            j -= 1;
+        }
+        match i.cmp(&j) {
+            Ordering::Less => {
+                data.swap(i, j);
+                if data[i] == data[index] {
+                    data.swap(p, i);
+                    p += 1;
+                }
+                if data[j] == data[index] {
+                    data.swap(q, j);
+                    q -= 1;
+                }
+            }
+            Ordering::Greater => break,
+            Ordering::Equal => {
+                i += 1;
+                j -= 1;
+                break;
+            }
+        }
+    }
+    if p <= j {
+        while p > l {
+            if !swap(data, l, j) {
+                break;
+            } else {
+                j -= 1;
+                l += 1;
+            }
+        }
+    }
+    if q >= i {
+        while q < r {
+            if !swap(data, i, r) {
+                break;
+            } else {
+                i += 1;
+                r -= 1;
+            }
+        }
+    }
+
+    (l + j + 1 - p, i + r - q - 1)
 }
