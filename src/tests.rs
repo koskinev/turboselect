@@ -1,4 +1,6 @@
-use crate::{median_of_5, quintary_partition_left, quintary_partition_right, select_nth, sort_3, sort_4};
+use crate::{
+    median_of_5, quintary_partition_left, quintary_partition_right, select_nth, sort_3, sort_4, prepare_partition,
+};
 
 use super::{select_nth_small, ternary_partion, Rng};
 
@@ -28,17 +30,18 @@ fn ternary() {
 #[test]
 fn quintary_a() {
     let repeat = 1000;
-    let count = 15;
-    let (u, v) = (count / 4, 3 * count / 4);
+    let count = 100;
     let mut rng = usize::rng(123).in_range(0, count);
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
 
-        let pivot_u = data[u].min(data[v]);
-        let pivot_v = data[v].max(data[u]);
+        let (u_a, u_d, v_a, v_d) = prepare_partition(&mut data, count / 3);
+        let pivot_u = data[u_a];
+        let pivot_v = data[v_a];
+
         // eprintln!("Pivots are {pivot_u} and {pivot_v}");
-        let (a, b, c, d) = quintary_partition_left(&mut data, u, v);
+        let (a, b, c, d) = quintary_partition_left(&mut data, u_a, u_d, v_a, v_d);
 
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -55,17 +58,18 @@ fn quintary_a() {
 #[test]
 fn quintary_b() {
     let repeat = 1000;
-    let count = 500;
-    let (u, v) = (count / 4, 3 * count / 4);
+    let count = 100;
     let mut rng = usize::rng(123).in_range(0, count);
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
 
-        let pivot_u = data[u].min(data[v]);
-        let pivot_v = data[v].max(data[u]);
+        let (u_a, u_d, v_a, v_d) = prepare_partition(&mut data, 2 * count / 3);
+        let pivot_u = data[u_a];
+        let pivot_v = data[v_a];
+
         // eprintln!("Pivots are {pivot_u} and {pivot_v}");
-        let (a, b, c, d) = quintary_partition_right(&mut data, u, v);
+        let (a, b, c, d) = quintary_partition_right(&mut data, u_a, u_d, v_a, v_d);
 
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -106,14 +110,15 @@ fn nth_small() {
 #[test]
 fn nth() {
     let repeat = 1000;
-    let count = 1000;
-    let mut rng = usize::rng(0).in_range(0, count);
+    let count = 10000;
+    // let mut range_rng = usize::rng(0).in_range(2, count);
+    let mut rng = usize::rng(123).in_range(0, count);
+    let mut k = 0;
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = rng.by_ref().take(count).collect();
-        let k = 42; 
-        rng.get();
-        let kth = *select_nth(&mut data, k);
+        select_nth(&mut data, k);
+        let kth = data[k];
         for (index, elem) in data.iter().enumerate() {
             match index {
                 i if i < k => assert!(elem <= &kth),
@@ -121,6 +126,7 @@ fn nth() {
                 _ => (),
             }
         }
+        k += count / repeat;
     }
 }
 
