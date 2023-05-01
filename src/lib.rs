@@ -1,11 +1,11 @@
 #![feature(specialization)]
 
 mod dbg;
-mod rand;
+mod pcg_rng;
 use std::cmp::Ordering;
 
 use dbg::Dbg;
-use rand::PCGRng;
+use pcg_rng::PCGRng;
 
 #[cfg(test)]
 mod tests;
@@ -191,7 +191,7 @@ fn prepare<T: Ord>(data: &mut [T], index: usize, rng: &mut PCGRng) -> (usize, us
     if u < v_a {
         let (u_a, u_d) = partition_at_index(&mut data[..v_a], u, rng);
         let q = len - s + v_a;
-        
+
         swap_parts(data, v_a, len - 1, s-v_a);
         (u_a, u_d, q, q + v_d - v_a)
     } else {
@@ -586,19 +586,19 @@ fn swap_parts<T: Ord>(data: &mut [T], left: usize, right: usize, count: usize) {
     left.swap_with_slice(right);
 }
 
-/// Partitions `data` into three parts, using the `k`th element as the pivot. Returns `(a, d)`,
+/// Partitions `data` into three parts, using the element at `index` as the pivot. Returns `(a, d)`,
 /// where `a` is the index of the first element equal to the pivot, and `d` is the index of the
 /// last element equal to the pivot.
 ///
 /// After the partitioning, the slice is arranged as follows:
 /// ```text
-///  ┌────────────────┐
-///  │ x < data[a]    │ x == data[i] where i in ..a
-///  ├────────────────┤
-///  │ x == data[a]   │ i in a..=d
-///  ├────────────────┤
-///  │ x > data[d]    │ i in d+1..
-///  └────────────────┘
+///  ┌────────────┐
+///  │ x < pivot  │ x == data[i] where i in ..a
+///  ├────────────┤
+///  │ x == pivot │ i in a..=d
+///  ├────────────┤
+///  │ x > pivot  │ i in d+1..
+///  └────────────┘
 /// ```
 ///
 /// # Panics
