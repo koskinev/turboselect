@@ -66,7 +66,11 @@ fn partition_at_last<T: Ord>(data: &mut [T]) -> (usize, usize) {
     (a, r)
 }
 
-fn partition_at_index<T: Ord>(mut data: &mut [T], mut index: usize, rng: &mut PCGRng) -> (usize, usize) {
+fn partition_at_index<T: Ord>(
+    mut data: &mut [T],
+    mut index: usize,
+    rng: &mut PCGRng,
+) -> (usize, usize) {
     loop {
         if index == 0 {
             return partition_at_first(data);
@@ -174,11 +178,7 @@ fn pivot_gap(s: usize, n: usize) -> usize {
     (BETA * (s as f64) * n.ln()).powf(0.5) as usize
 }
 
-fn prepare<T: Ord>(
-    data: &mut [T],
-    index: usize,
-    rng: &mut PCGRng,
-) -> (usize, usize, usize, usize) {
+fn prepare<T: Ord>(data: &mut [T], index: usize, rng: &mut PCGRng) -> (usize, usize, usize, usize) {
     let len = data.len();
     let s = sample_size(len);
     shuffle(data, s, rng);
@@ -186,16 +186,13 @@ fn prepare<T: Ord>(
     let g = pivot_gap(s, len);
     let u = (((index + 1) * s) / len).saturating_sub(g);
     let v = (((index + 1) * s) / len + g).min(s - 1);
-    // let u = (((k + 1) * s + len - 1) / len).saturating_sub(g + 1);
-    // let v = (((k + 1) * s + len - 1) / len + g).min(s - 1);
 
     let (v_a, v_d) = partition_at_index(&mut data[..s], v, rng);
     if u < v_a {
         let (u_a, u_d) = partition_at_index(&mut data[..v_a], u, rng);
         let q = len - s + v_a;
-        for k in 0..s - v_a {
-            data.swap(v_a + k, q + k);
-        }
+        
+        swap_parts(data, v_a, len - 1, s-v_a);
         (u_a, u_d, q, q + v_d - v_a)
     } else {
         (v_a, v_d, v_a, v_d)
@@ -242,15 +239,15 @@ fn quintary_left<T: Ord>(
     let mut i = p - 1;
     let mut j = q + 1;
     loop {
-        // B2: Increment i until data[i] >= data[r]
+        // Increment i until data[i] >= data[r]
         loop {
             i += 1;
             if data[i] >= data[e] {
                 break;
             }
             match data[i].cmp(&data[s]) {
-                Ordering::Greater => data.swap(p, i),
                 Ordering::Less => continue,
+                Ordering::Greater => data.swap(p, i),
                 Ordering::Equal => {
                     data.swap(p, i);
                     data.swap(l, p);
@@ -259,7 +256,7 @@ fn quintary_left<T: Ord>(
             }
             p += 1;
         }
-        // B3: Decrement j until data[j] < data[r]
+        // Decrement j until data[j] < data[r]
         loop {
             j -= 1;
             match data[j].cmp(&data[e]) {
@@ -271,8 +268,8 @@ fn quintary_left<T: Ord>(
                 }
             }
         }
-        // B4: Exchange data[i] and data[j] if i < j and repeat B2 and B3,
-        // otherwise stop
+        // Exchange data[i] and data[j], then if i < j and repeat,
+        // otherwise break the loop.
         if i < j {
             data.swap(i, j);
             match data[i].cmp(&data[s]) {
@@ -297,35 +294,32 @@ fn quintary_left<T: Ord>(
         }
     }
 
-    // B5: Cleanup. At this point, the pivots are at the ends of the slice and the slice is
-    // partitioned into five parts:
-    //  +-----------------------+
-    //  | x == data[s]          | x == data[k] where k in s..l
-    //  +-----------------------+
-    //  | data[s] < x < data[e] | k in l..p
-    //  +-----------------------+
-    //  | x < data[s]           | k in p..=j
-    //  +-----------------------+
-    //  | x > data[e]           | k in i..=q
-    //  +-----------------------+
-    //  | x == data[e]          | k in q+1..=e
-    //  +-----------------------+
+    // Cleanup. At this point, the following assertions hold:
 
+    // let low = &data[s];
+    // let high = &data[e];
     // for (k, x) in data.iter().enumerate() {
     //     if k < s {
-    //         assert!(x < &data[s]);
+    //         // Part 0: ..s
+    //         assert!(x < low);
     //     } else if k < l {
-    //         assert!(x == &data[s]);
+    //         // Part 1: s..l
+    //         assert!(x == low);
     //     } else if k < p {
-    //         assert!(&data[s] < x && x < &data[e]);
+    //         // Part 2: l..p
+    //         assert!(low < x && x < high);
     //     } else if k <= j {
-    //         assert!(x < &data[s]);
+    //         // Part 3: p..=j
+    //         assert!(x < low);
     //     } else if k <= q {
-    //         assert!(x > &data[e]);
+    //         // Part 4: j+1..=q
+    //         assert!(x > high);
     //     } else if k <= e {
-    //         assert!(x == &data[e]);
+    //         // Part 5: q+1..=e
+    //         assert!(x == high);
     //     } else {
-    //         assert!(x > &data[e]);
+    //         // Part 6: e+1..
+    //         assert!(x > high);
     //     }
     // }
 
@@ -334,30 +328,30 @@ fn quintary_left<T: Ord>(
     let d = e + j - q;
     let c = d + q - e;
 
-    // Swap the second and the middle parts.
-    for k in 0..(j + 1 - p).min(p - l) {
-        data.swap(l + k, j - k)
-    }
-    // Swap the first and second parts.
-    for k in 0..(l - s).min(j + 1 - p) {
-        data.swap(s + k, b - k - 1)
-    }
-    // Swap the fourth and fifth parts.
-    for k in 0..(q + 1 - i).min(e - q) {
-        data.swap(i + k, e - k)
-    }
+    // Swap parts 2 and 3.
+    swap_parts(data, l, j, (j + 1 - p).min(p - l));
 
+    // Swap parts 1 and 2.
+    swap_parts(data, s, b - 1, (l - s).min(j + 1 - p));
+
+    // Swap parts 4 and 5.
+    swap_parts(data, i, e, (q + 1 - i).min(e - q));
+
+    // The slice is now partitioned as follows:
+    
+    // let low = &data[a];
+    // let high = &data[d];
     // for (k, x) in data.iter().enumerate() {
     //     if k < a {
-    //         assert!(x < &data[a]);
+    //         assert!(x < low);
     //     } else if k < b {
-    //         assert!(x == &data[a]);
+    //         assert!(x == low);
     //     } else if k <= c {
-    //         assert!(&data[a] < x && x < &data[d]);
+    //         assert!(low < x && x < high);
     //     } else if k <= d {
-    //         assert!(x == &data[d]);
+    //         assert!(x == high);
     //     } else {
-    //         assert!(x > &data[d]);
+    //         assert!(x > high);
     //     }
     // }
 
@@ -404,19 +398,19 @@ fn quintary_right<T: Ord>(
     let mut i = p - 1;
     let mut j = q + 1;
     loop {
-        // C2: Increment i until data[i] > data[s]
+        // Increment i until data[i] > data[s]
         loop {
             i += 1;
             match data[i].cmp(&data[s]) {
-                Ordering::Greater => break,
                 Ordering::Less => continue,
+                Ordering::Greater => break,
                 Ordering::Equal => {
                     data.swap(p, i);
                     p += 1;
                 }
             }
         }
-        // C3: Decrement j until data[j] <= data[s]
+        // Decrement j until data[j] <= data[s]
         loop {
             j -= 1;
             if data[j] <= data[s] {
@@ -435,8 +429,8 @@ fn quintary_right<T: Ord>(
             }
             q -= 1;
         }
-        // C4: Exchange data[i] and data[j] if i < j and repeat B2 and B3,
-        // otherwise stop
+        // Exchange data[i] and data[j], then if i < j repeat,
+        // otherwise break the loop
         if i < j {
             data.swap(i, j);
             if data[i] == data[s] {
@@ -461,37 +455,67 @@ fn quintary_right<T: Ord>(
         }
     }
 
-    // B5: Cleanup. At this point, the pivots are at the ends of the slice and the slice is
-    // partitioned into five parts:
-    //  +-----------------------+
-    //  | x == data[s]          | x == data[k] where k in ..p
-    //  +-----------------------+
-    //  | x < data[s]           | k in p..i
-    //  +-----------------------+
-    //  | x > data[e]           | k in i..=q
-    //  +-----------------------+
-    //  | data[s] < x < data[e] | k in q+1..=h
-    //  +-----------------------+
-    //  | x == data[e]          | k in h+1..
-    //  +-----------------------+
+    // Cleanup. At this point, the following assertions hold:
+
+    // let low = &data[s];
+    // let high = &data[e];
+    // for (k, x) in data.iter().enumerate() {
+    //     if k < s {
+    //         // Part 0: ..s
+    //         assert!(x < low);
+    //     } else if k < p {
+    //         // Part 1: s..p
+    //         assert!(x == low);
+    //     } else if k < i {
+    //         // Part 2: p..i
+    //         assert!(x < low);
+    //     } else if k <= q {
+    //         // Part 3: i..=q
+    //         assert!(x > high);
+    //     } else if k <= h {
+    //         // Part 4: q+1..=h
+    //         assert!(low < x && x < high);
+    //     } else if k <= e {
+    //         // Part 5: h+1..=e
+    //         assert!(x == high);
+    //     } else {
+    //         // Part 6: e+1..
+    //         assert!(x > high);
+    //     }
+    // }
 
     let a = s + i - p;
     let b = a + p - s;
     let d = e + j - q;
     let c = d + h - e;
 
-    // Swap the middle and fourth parts.
-    for k in 0..(q + 1 - i).min(h - q) {
-        data.swap(i + k, h - k);
-    }
-    // Swap the fourth and last parts.
-    for k in 0..(e - h).min(q + 1 - i) {
-        data.swap(c + k + 1, e - k);
-    }
-    // Swap the first and second parts.
-    for k in 0..(p - s).min(i - p) {
-        data.swap(s + k, b - k - 1);
-    }
+    // Swap parts 3 and 4
+    swap_parts(data, i, h, (q + 1 - i).min(h - q));
+
+    // Swap parts 4 and 5
+    swap_parts(data, c + 1, e, (e - h).min(q + 1 - i));
+
+    // Swap parts 1 and 2
+    swap_parts(data, s, b - 1, (p - s).min(i - p));
+
+    // The slice is now partitioned as follows:
+    
+    // let low = &data[a];
+    // let high = &data[d];
+    // for (k, x) in data.iter().enumerate() {
+    //     if k < a {
+    //         assert!(x < low);
+    //     } else if k < b {
+    //         assert!(x == low);
+    //     } else if k <= c {
+    //         assert!(low < x && x < high);
+    //     } else if k <= d {
+    //         assert!(x == high);
+    //     } else {
+    //         assert!(x > high);
+    //     }
+    // }
+
     (a, b, c, d)
 }
 
@@ -550,6 +574,18 @@ fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
     (data[a] > data[b]).then(|| data.swap(a, b)).is_some()
 }
 
+/// Swaps the subslice of `count` elements starting from `left` with the equal length subslice
+/// ending at `right`.
+///
+/// Panics if `left` or `right` are out of bounds, or if the subslices overlap.
+fn swap_parts<T: Ord>(data: &mut [T], left: usize, right: usize, count: usize) {
+    let inner = data[left..=right].as_mut();
+    let (left, tail) = inner.split_at_mut(count);
+    let mid = tail.len() - count;
+    let right = tail[mid..].as_mut();
+    left.swap_with_slice(right);
+}
+
 /// Partitions `data` into three parts, using the `k`th element as the pivot. Returns `(a, d)`,
 /// where `a` is the index of the first element equal to the pivot, and `d` is the index of the
 /// last element equal to the pivot.
@@ -568,42 +604,46 @@ fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
 /// # Panics
 ///
 /// Panics if `index` is out of bounds.
-fn ternary<T: Ord>(data: &mut [T], mut index: usize) -> (usize, usize) {
+fn ternary<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
     if data.len() == 1 {
         assert!(index == 0);
         return (0, 0);
     }
     data.swap(0, index);
-    index = 0;
+    let mut v = 0;
     let (mut l, mut r) = (0, data.len() - 1);
     let (mut p, mut q) = (1, r - 1);
     let (mut i, mut j) = (l, r);
-    match data[index].cmp(&data[r]) {
+    match data[v].cmp(&data[r]) {
         Ordering::Less => r = q,
         Ordering::Greater => {
             data.swap(l, r);
             l = p;
-            index = r;
+            v = r;
         }
         _ => {}
     }
     loop {
         i += 1;
         j -= 1;
-        while data[i] < data[index] {
+        // Increment i until data[i] >= data[k]
+        while data[i] < data[v] {
             i += 1;
         }
-        while data[j] > data[index] {
+        // Decrement j until data[j] <= data[k]
+        while data[j] > data[v] {
             j -= 1;
         }
+        // Exchange data[i] and data[j] if i < j,
+        // otherwise break out of the loop.
         match i.cmp(&j) {
             Ordering::Less => {
                 data.swap(i, j);
-                if data[i] == data[index] {
+                if data[i] == data[v] {
                     data.swap(p, i);
                     p += 1;
                 }
-                if data[j] == data[index] {
+                if data[j] == data[v] {
                     data.swap(q, j);
                     q -= 1;
                 }
@@ -616,26 +656,53 @@ fn ternary<T: Ord>(data: &mut [T], mut index: usize) -> (usize, usize) {
             }
         }
     }
-    if p <= j {
-        while p > l {
-            if !swap(data, l, j) {
-                break;
-            } else {
-                j -= 1;
-                l += 1;
-            }
-        }
-    }
-    if q >= i {
-        while q < r {
-            if !swap(data, i, r) {
-                break;
-            } else {
-                i += 1;
-                r -= 1;
-            }
-        }
-    }
 
-    (l + j + 1 - p, i + r - q - 1)
+    // Cleanup. At this point, the following assertions hold:
+
+    // let pivot = &data[v];
+    // for (k, x) in data.iter().enumerate() {
+    //     if k < l {
+    //         // Part 0: ..l
+    //         assert!(x < pivot);
+    //     } else if k < p {
+    //         // Part 1: l..p
+    //         assert!(x == pivot);
+    //     } else if k <= j {
+    //         // Part 2: p..=j
+    //         assert!(x < pivot);
+    //     } else if k < i {
+    //         // Part 3: j+1..i
+    //         assert!(x == pivot);
+    //     } else if k <= q {
+    //         // Part 4: i..=q
+    //         assert!(x > pivot);
+    //     } else if k <= r {
+    //         // Part 5: q+1..=r
+    //         assert!(x == pivot);
+    //     } else {
+    //         // Part 6: r+1..
+    //         assert!(x > pivot);
+    //     }
+    // }
+
+    // Swap parts 1 and 2
+    swap_parts(data, l, j, (p - l).min(j + 1 - p));
+
+    // Swap parts 3 and 4
+    swap_parts(data, i, r, (r - q).min(q + 1 - i));
+
+    let a = l + j + 1 - p;
+    let d = i + r - q - 1;
+
+    // let pivot = &data[a];
+    // for (k, x) in data.iter().enumerate() {
+    //     if k < a {
+    //         assert!(x < pivot);
+    //     } else if k <= d {
+    //         assert!(x == pivot);
+    //     } else {
+    //         assert!(x > pivot);
+    //     }
+    // }
+    (a, d)
 }
