@@ -1,12 +1,36 @@
 use crate::{
-    median_of_5, partition_at_index, prepare, quintary_left, quintary_right, pcg_rng::PCGRng,
-    select_nth, sort_3, sort_4,
+    adaptive_quickselect, floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare,
+    quintary_left, quintary_right, floyd_rivest_select_nth, sort_3, sort_4,
 };
 
 use super::{partition_at_index_small, ternary};
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
     std::iter::from_fn(move || Some(rng.bounded_usize(0, high))).take(count)
+}
+
+#[test]
+fn quickselect() {
+    let repeat = 1000;
+    let count = 1000;
+    let mut rng = PCGRng::new(123);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
+        let k = 42; // rng.bounded_usize(0, count);
+
+        let (a, d) = adaptive_quickselect(data.as_mut_slice(), k);
+        assert!(a <= k && k <= d);
+
+        let pivot = &data[a];
+        for (index, elem) in data.iter().enumerate() {
+            match index {
+                i if i < a => assert!(elem < pivot),
+                i if i > d => assert!(elem > pivot),
+                _ => assert!(elem == pivot),
+            }
+        }
+    }
 }
 
 #[test]
@@ -46,7 +70,7 @@ fn partition_5_left() {
         let pivot_u = data[u_a];
         let pivot_v = data[v_a];
 
-        // eprintln!("Pivots are {pivot_u} and {pivot_v}");
+        eprintln!("Pivots are {pivot_u} and {pivot_v}");
         let (a, b, c, d) = quintary_left(&mut data, u_a, u_d, v_a, v_d);
 
         for (index, elem) in data.iter().enumerate() {
@@ -122,7 +146,7 @@ fn partition() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        partition_at_index(&mut data, k, &mut rng);
+        floyd_rivest_select(&mut data, k, &mut rng);
         let kth = data[k];
         for (index, elem) in data.iter().enumerate() {
             match index {
@@ -147,7 +171,7 @@ fn nth() {
 
         let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
         let index = pcg.bounded_usize(0, count);
-        select_nth(&mut data, index);
+        floyd_rivest_select_nth(&mut data, index);
         let nth = data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
             i if i < index => assert!(elem <= &nth),

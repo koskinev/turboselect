@@ -14,6 +14,190 @@ const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
 const CUT: usize = 600;
 
+pub fn adaptive_quickselect<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
+    let (mut s, mut k, mut e) = (0, index, data.len());
+    loop {
+        let inner = data[s..e].as_mut();
+        let len = inner.len();
+        let r = (k as f32) / (len as f32);
+
+        let (a, d) = if k == 0 {
+            partition_at_first(inner)
+        } else if k == len - 1 {
+            partition_at_last(inner)
+        } else if len < 12 {
+            if len >= 5 {
+                median_of_5(inner, 0, len / 4, len / 2, 3 * len / 4, len - 1);
+            }
+            ternary(inner, len / 2)
+        } else if r <= 7. / 16. {
+            if r <= 1. / 12. {
+                guess_far_left_pivot(inner, k)
+            } else {
+                guess_left_pivot(inner, k)
+            }
+        } else if r >= 1. - 7. / 16. {
+            if r >= 1. - 1. / 12. {
+                guess_far_right_pivot(inner, k)
+            } else {
+                guess_right_pivot(inner, k)
+            }
+        } else {
+            guess_middle_pivot(inner, k)
+        };
+        match k {
+            i if i < a => e = s + a,
+            i if i > d => {
+                s += d + 1;
+                k -= d + 1;
+            }
+            _ => return (s + a, s + d),
+        }
+    }
+}
+
+fn floyd_rivest_select<T: Ord>(
+    mut data: &mut [T],
+    mut index: usize,
+    rng: &mut PCGRng,
+) -> (usize, usize) {
+    loop {
+        if index == 0 {
+            return partition_at_first(data);
+        } else if index == data.len() - 1 {
+            return partition_at_last(data);
+        } else if data.len() < CUT {
+            let (a, d) = adaptive_quickselect(data, index);
+            return (a, d);
+        } else {
+            let (u_a, u_d, v_a, v_d) = prepare(data, index, rng);
+            let (a, b, c, d) = if index < data.len() / 2 {
+                quintary_left(data, u_a, u_d, v_a, v_d)
+            } else {
+                quintary_right(data, u_a, u_d, v_a, v_d)
+            };
+            if index < a {
+                data = &mut data[..a];
+            } else if index < b {
+                return (a, b - 1);
+            } else if index <= c {
+                data = &mut data[b..=c];
+                index -= b;
+            } else if index <= d {
+                return (c + 1, d);
+            } else {
+                data = &mut data[d + 1..];
+                index -= d + 1;
+            }
+        }
+    }
+}
+
+fn guess_far_left_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
+    let len = data.len();
+    if len < 12 {
+        ternary(data, len / 2)
+    } else {
+        let f = len / 4;
+        let f2 = 2 * f;
+        for k in f..f2 {
+            sort_4(data, k - f, k, k + f, k + f2);
+        }
+        let g = f / 3;
+        let g2 = 2 * g;
+        for k in f..f + g {
+            swap(data, k, k + g);
+            swap(data, k, k + g2);
+        }
+        let k = index * g / len;
+        adaptive_quickselect(data[f..f + g].as_mut(), k);
+        ternary(data, f + k)
+    }
+}
+
+fn guess_far_right_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
+    let len = data.len();
+    if len < 12 {
+        ternary(data, len / 2)
+    } else {
+        let q1 = len / 4;
+        let mid = 2 * q1;
+        for k in q1..mid {
+            sort_4(data, k - q1, k, k + q1, k + mid);
+        }
+        let q3 = 3 * q1;
+        let m = q1 / 3;
+        let m2 = 2 * m;
+        for k in q3 - m..q3 {
+            swap(data, k - m2, k);
+            swap(data, k - m, k);
+        }
+        let k = index * m / len;
+        adaptive_quickselect(data[q3 - m..q3].as_mut(), k);
+        ternary(data, q3 - m + k)
+    }
+}
+
+fn guess_left_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
+    let len = data.len();
+    if len < 12 {
+        ternary(data, len / 2)
+    } else {
+        let f = len / 4;
+        let (f2, f3) = (2 * f, 3 * f);
+        for k in 0..f {
+            sort_4(data, k, k + f, k + f2, k + f3);
+        }
+        let g = f / 3;
+        let g2 = 2 * g;
+        for k in f..f + g {
+            sort_3(data, k, k + g, k + g2);
+        }
+        adaptive_quickselect(data[f..f + g].as_mut(), index * g / len);
+        ternary(data, f + index * g / len)
+    }
+}
+
+fn guess_middle_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
+    let len = data.len();
+    if len < 9 {
+        ternary(data, len / 2)
+    } else {
+        let f = len / 9;
+        let (f3, f4, f5, f6) = (3 * f, 4 * f, 5 * f, 6 * f);
+        for k in f3..f6 {
+            sort_3(data, k - f3, k, k + f3);
+        }
+        for k in f4..f5 {
+            sort_3(data, k - f, k, k + f3);
+        }
+        let k = index * f / len;
+        adaptive_quickselect(data[f4..f5].as_mut(), k);
+        ternary(data, f4 + k)
+    }
+}
+
+fn guess_right_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
+    let len = data.len();
+    if len < 12 {
+        ternary(data, len / 2)
+    } else {
+        let f = len / 4;
+        let (f2, f3) = (2 * f, 3 * f);
+        for k in 0..f {
+            sort_4(data, k, k + f, k + f2, k + f3);
+        }
+        let g = f / 3;
+        let g2 = 2 * g;
+        for k in f3 - g..f3 {
+            sort_3(data, k - g2, k - g, k);
+        }
+        let k = index * g / len;
+        adaptive_quickselect(data[f3 - g..f3].as_mut(), k);
+        ternary(data, f3 - g + k)
+    }
+}
+
 fn median_of_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) -> usize {
     swap(data, a, c);
     swap(data, b, d);
@@ -66,43 +250,6 @@ fn partition_at_last<T: Ord>(data: &mut [T]) -> (usize, usize) {
     (a, r)
 }
 
-fn partition_at_index<T: Ord>(
-    mut data: &mut [T],
-    mut index: usize,
-    rng: &mut PCGRng,
-) -> (usize, usize) {
-    loop {
-        if index == 0 {
-            return partition_at_first(data);
-        } else if index == data.len() - 1 {
-            return partition_at_last(data);
-        } else if data.len() < CUT {
-            let (a, d) = partition_at_index_small(data, index);
-            return (a, d);
-        } else {
-            let (u_a, u_d, v_a, v_d) = prepare(data, index, rng);
-            let (a, b, c, d) = if index < data.len() / 2 {
-                quintary_left(data, u_a, u_d, v_a, v_d)
-            } else {
-                quintary_right(data, u_a, u_d, v_a, v_d)
-            };
-            if index < a {
-                data = &mut data[..a];
-            } else if index < b {
-                return (a, b - 1);
-            } else if index <= c {
-                data = &mut data[b..=c];
-                index -= b;
-            } else if index <= d {
-                return (c + 1, d);
-            } else {
-                data = &mut data[d + 1..];
-                index -= d + 1;
-            }
-        }
-    }
-}
-
 /// Finds the `k`th smallest element in `data`. Returns the `(a, d)` where `a <= k <= d`.
 /// After the call, `data` is partitioned into three parts:
 /// - Elements in the range `0..a` are less than the `k`th smallest element
@@ -112,14 +259,10 @@ fn partition_at_index<T: Ord>(
 /// # Panics
 ///
 /// Panics if `k >= data.len()`.
-fn partition_at_index_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) {
-    assert!(k < data.len());
-    // eprintln!(
-    //     "Start select_nth_small: k = {k}, data.len() = {}",
-    //     data.len()
-    // );
+fn partition_at_index_small<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
+    assert!(index < data.len());
     match data.len() {
-        len @ 5.. => match k {
+        len @ 5.. => match index {
             0 => partition_at_first(data),
             k if k == len - 1 => partition_at_last(data),
             _ => {
@@ -128,7 +271,7 @@ fn partition_at_index_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) 
                 let d = c + b;
                 median_of_5(data, 0, b, c, d, len - 1);
                 let (a, d) = ternary(data, c);
-                match k {
+                match index {
                     k if k < a => partition_at_index_small(&mut data[..a], k),
                     k if k > d => {
                         let (u, v) = partition_at_index_small(&mut data[d + 1..], k - d - 1);
@@ -141,10 +284,10 @@ fn partition_at_index_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) 
         4 => {
             sort_4(data, 0, 1, 2, 3);
             let (mut a, mut d) = (0, 3);
-            while data[a] != data[k] {
+            while data[a] != data[index] {
                 a += 1;
             }
-            while data[d] != data[k] {
+            while data[d] != data[index] {
                 d -= 1;
             }
             (a, d)
@@ -152,10 +295,10 @@ fn partition_at_index_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) 
         3 => {
             sort_3(data, 0, 1, 2);
             let (mut a, mut d) = (0, 2);
-            while data[a] != data[k] {
+            while data[a] != data[index] {
                 a += 1;
             }
-            while data[d] != data[k] {
+            while data[d] != data[index] {
                 d -= 1;
             }
             (a, d)
@@ -165,11 +308,11 @@ fn partition_at_index_small<T: Ord>(data: &mut [T], k: usize) -> (usize, usize) 
             if data[0] == data[1] {
                 (0, 1)
             } else {
-                (k, k)
+                (index, index)
             }
         }
-        1 => (k, k),
-        _ => panic!("select from empty slice"),
+        1 => (index, index),
+        _ => panic!("empty slice"),
     }
 }
 
@@ -187,12 +330,12 @@ fn prepare<T: Ord>(data: &mut [T], index: usize, rng: &mut PCGRng) -> (usize, us
     let u = (((index + 1) * s) / len).saturating_sub(g);
     let v = (((index + 1) * s) / len + g).min(s - 1);
 
-    let (v_a, v_d) = partition_at_index(&mut data[..s], v, rng);
+    let (v_a, v_d) = floyd_rivest_select(&mut data[..s], v, rng);
     if u < v_a {
-        let (u_a, u_d) = partition_at_index(&mut data[..v_a], u, rng);
+        let (u_a, u_d) = floyd_rivest_select(&mut data[..v_a], u, rng);
         let q = len - s + v_a;
 
-        swap_parts(data, v_a, len - 1, s-v_a);
+        swap_parts(data, v_a, len - 1, s - v_a);
         (u_a, u_d, q, q + v_d - v_a)
     } else {
         (v_a, v_d, v_a, v_d)
@@ -338,7 +481,7 @@ fn quintary_left<T: Ord>(
     swap_parts(data, i, e, (q + 1 - i).min(e - q));
 
     // The slice is now partitioned as follows:
-    
+
     // let low = &data[a];
     // let high = &data[d];
     // for (k, x) in data.iter().enumerate() {
@@ -499,7 +642,7 @@ fn quintary_right<T: Ord>(
     swap_parts(data, s, b - 1, (p - s).min(i - p));
 
     // The slice is now partitioned as follows:
-    
+
     // let low = &data[a];
     // let high = &data[d];
     // for (k, x) in data.iter().enumerate() {
@@ -525,12 +668,12 @@ fn sample_size(n: usize) -> usize {
     (ALPHA * f).ceil().min(n - 1.) as usize
 }
 
-pub fn select_nth<T: Ord>(data: &mut [T], index: usize) -> &T {
+pub fn floyd_rivest_select_nth<T: Ord>(data: &mut [T], index: usize) -> &T {
     if data.len() < CUT {
-        partition_at_index_small(data, index);
+        adaptive_quickselect(data, index);
     } else {
         let mut rng = PCGRng::new(data.as_ptr() as u64);
-        partition_at_index(data, index, &mut rng);
+        floyd_rivest_select(data, index, &mut rng);
     }
     &data[index]
 }
