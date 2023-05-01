@@ -12,63 +12,21 @@ mod tests;
 
 const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
-const CUT: usize = 600;
-
-pub fn adaptive_quickselect<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
-    let (mut s, mut k, mut e) = (0, index, data.len());
-    loop {
-        let inner = data[s..e].as_mut();
-        let len = inner.len();
-        let r = (k as f32) / (len as f32);
-
-        let (a, d) = if k == 0 {
-            partition_at_first(inner)
-        } else if k == len - 1 {
-            partition_at_last(inner)
-        } else if len < 12 {
-            if len >= 5 {
-                median_of_5(inner, 0, len / 4, len / 2, 3 * len / 4, len - 1);
-            }
-            ternary(inner, len / 2)
-        } else if r <= 7. / 16. {
-            if r <= 1. / 12. {
-                guess_far_left_pivot(inner, k)
-            } else {
-                guess_left_pivot(inner, k)
-            }
-        } else if r >= 1. - 7. / 16. {
-            if r >= 1. - 1. / 12. {
-                guess_far_right_pivot(inner, k)
-            } else {
-                guess_right_pivot(inner, k)
-            }
-        } else {
-            guess_middle_pivot(inner, k)
-        };
-        match k {
-            i if i < a => e = s + a,
-            i if i > d => {
-                s += d + 1;
-                k -= d + 1;
-            }
-            _ => return (s + a, s + d),
-        }
-    }
-}
+const CUT: usize = 1000;
 
 fn floyd_rivest_select<T: Ord>(
     mut data: &mut [T],
     mut index: usize,
     rng: &mut PCGRng,
 ) -> (usize, usize) {
-    loop {
+    let mut offset = 0;
+    let (a, d) = loop {
         if index == 0 {
-            return partition_at_first(data);
+            break partition_at_first(data);
         } else if index == data.len() - 1 {
-            return partition_at_last(data);
+            break partition_at_last(data);
         } else if data.len() < CUT {
-            let (a, d) = adaptive_quickselect(data, index);
-            return (a, d);
+            break partition_at_index_small(data, index);
         } else {
             let (u_a, u_d, v_a, v_d) = prepare(data, index, rng);
             let (a, b, c, d) = if index < data.len() / 2 {
@@ -79,123 +37,21 @@ fn floyd_rivest_select<T: Ord>(
             if index < a {
                 data = &mut data[..a];
             } else if index < b {
-                return (a, b - 1);
+                break ( a,  b - 1);
             } else if index <= c {
                 data = &mut data[b..=c];
+                offset += b;
                 index -= b;
             } else if index <= d {
-                return (c + 1, d);
+                break ( c + 1,  d);
             } else {
                 data = &mut data[d + 1..];
+                offset += d + 1;
                 index -= d + 1;
             }
         }
-    }
-}
-
-fn guess_far_left_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
-    let len = data.len();
-    if len < 12 {
-        ternary(data, len / 2)
-    } else {
-        let f = len / 4;
-        let f2 = 2 * f;
-        for k in f..f2 {
-            sort_4(data, k - f, k, k + f, k + f2);
-        }
-        let g = f / 3;
-        let g2 = 2 * g;
-        for k in f..f + g {
-            swap(data, k, k + g);
-            swap(data, k, k + g2);
-        }
-        let k = index * g / len;
-        adaptive_quickselect(data[f..f + g].as_mut(), k);
-        ternary(data, f + k)
-    }
-}
-
-fn guess_far_right_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
-    let len = data.len();
-    if len < 12 {
-        ternary(data, len / 2)
-    } else {
-        let q1 = len / 4;
-        let mid = 2 * q1;
-        for k in q1..mid {
-            sort_4(data, k - q1, k, k + q1, k + mid);
-        }
-        let q3 = 3 * q1;
-        let m = q1 / 3;
-        let m2 = 2 * m;
-        for k in q3 - m..q3 {
-            swap(data, k - m2, k);
-            swap(data, k - m, k);
-        }
-        let k = index * m / len;
-        adaptive_quickselect(data[q3 - m..q3].as_mut(), k);
-        ternary(data, q3 - m + k)
-    }
-}
-
-fn guess_left_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
-    let len = data.len();
-    if len < 12 {
-        ternary(data, len / 2)
-    } else {
-        let f = len / 4;
-        let (f2, f3) = (2 * f, 3 * f);
-        for k in 0..f {
-            sort_4(data, k, k + f, k + f2, k + f3);
-        }
-        let g = f / 3;
-        let g2 = 2 * g;
-        for k in f..f + g {
-            sort_3(data, k, k + g, k + g2);
-        }
-        adaptive_quickselect(data[f..f + g].as_mut(), index * g / len);
-        ternary(data, f + index * g / len)
-    }
-}
-
-fn guess_middle_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
-    let len = data.len();
-    if len < 9 {
-        ternary(data, len / 2)
-    } else {
-        let f = len / 9;
-        let (f3, f4, f5, f6) = (3 * f, 4 * f, 5 * f, 6 * f);
-        for k in f3..f6 {
-            sort_3(data, k - f3, k, k + f3);
-        }
-        for k in f4..f5 {
-            sort_3(data, k - f, k, k + f3);
-        }
-        let k = index * f / len;
-        adaptive_quickselect(data[f4..f5].as_mut(), k);
-        ternary(data, f4 + k)
-    }
-}
-
-fn guess_right_pivot<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
-    let len = data.len();
-    if len < 12 {
-        ternary(data, len / 2)
-    } else {
-        let f = len / 4;
-        let (f2, f3) = (2 * f, 3 * f);
-        for k in 0..f {
-            sort_4(data, k, k + f, k + f2, k + f3);
-        }
-        let g = f / 3;
-        let g2 = 2 * g;
-        for k in f3 - g..f3 {
-            sort_3(data, k - g2, k - g, k);
-        }
-        let k = index * g / len;
-        adaptive_quickselect(data[f3 - g..f3].as_mut(), k);
-        ternary(data, f3 - g + k)
-    }
+    };
+    (a + offset, d + offset)
 }
 
 fn median_of_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) -> usize {
@@ -668,9 +524,9 @@ fn sample_size(n: usize) -> usize {
     (ALPHA * f).ceil().min(n - 1.) as usize
 }
 
-pub fn floyd_rivest_select_nth<T: Ord>(data: &mut [T], index: usize) -> &T {
+pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
     if data.len() < CUT {
-        adaptive_quickselect(data, index);
+        partition_at_index_small(data, index);
     } else {
         let mut rng = PCGRng::new(data.as_ptr() as u64);
         floyd_rivest_select(data, index, &mut rng);

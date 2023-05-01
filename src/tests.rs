@@ -1,36 +1,12 @@
 use crate::{
-    adaptive_quickselect, floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare,
-    quintary_left, quintary_right, floyd_rivest_select_nth, sort_3, sort_4,
+    floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare, quintary_left, quintary_right,
+    select_nth_unstable, shuffle, sort_3, sort_4,
 };
 
 use super::{partition_at_index_small, ternary};
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
     std::iter::from_fn(move || Some(rng.bounded_usize(0, high))).take(count)
-}
-
-#[test]
-fn quickselect() {
-    let repeat = 1000;
-    let count = 1000;
-    let mut rng = PCGRng::new(123);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        let k = 42; // rng.bounded_usize(0, count);
-
-        let (a, d) = adaptive_quickselect(data.as_mut_slice(), k);
-        assert!(a <= k && k <= d);
-
-        let pivot = &data[a];
-        for (index, elem) in data.iter().enumerate() {
-            match index {
-                i if i < a => assert!(elem < pivot),
-                i if i > d => assert!(elem > pivot),
-                _ => assert!(elem == pivot),
-            }
-        }
-    }
 }
 
 #[test]
@@ -160,6 +136,18 @@ fn partition() {
 }
 
 #[test]
+fn large_median() {
+    let mut pcg = PCGRng::new(0);
+    let count = 10_000_000;
+    let mid = count / 2;
+
+    let mut data: Vec<usize> = (0..count).collect();
+    shuffle(data.as_mut_slice(), count, &mut pcg);
+    let median = select_nth_unstable(data.as_mut_slice(), mid);
+    assert_eq!(median, &mid);
+}
+
+#[test]
 fn nth() {
     let repeat = 1000;
     let max = 10000;
@@ -171,7 +159,7 @@ fn nth() {
 
         let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
         let index = pcg.bounded_usize(0, count);
-        floyd_rivest_select_nth(&mut data, index);
+        select_nth_unstable(&mut data, index);
         let nth = data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
             i if i < index => assert!(elem <= &nth),
