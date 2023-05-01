@@ -29,7 +29,7 @@ fn floyd_rivest_select<T: Ord>(
             break partition_at_index_small(data, index);
         } else {
             let (u_a, u_d, v_a, v_d) = prepare(data, index, rng);
-            let (a, b, c, d) = if index < data.len() / 2 {
+            let (a, b, c, d) = if index <= data.len() / 2 {
                 quintary_left(data, u_a, u_d, v_a, v_d)
             } else {
                 quintary_right(data, u_a, u_d, v_a, v_d)
@@ -37,13 +37,13 @@ fn floyd_rivest_select<T: Ord>(
             if index < a {
                 data = &mut data[..a];
             } else if index < b {
-                break ( a,  b - 1);
+                break (a, b - 1);
             } else if index <= c {
                 data = &mut data[b..=c];
                 offset += b;
                 index -= b;
             } else if index <= d {
-                break ( c + 1,  d);
+                break (c + 1, d);
             } else {
                 data = &mut data[d + 1..];
                 offset += d + 1;
@@ -230,6 +230,8 @@ fn quintary_left<T: Ord>(
         let (a, d) = ternary(data, u_d);
         return (a, d + 1, d, d);
     }
+    // See https://github.com/rust-lang/rust/blob/master/library/core/src/slice/sort.rs#L302
+    // for optimizating the partitioning.
     let s = u_a;
     let e = v_d;
     let mut l = u_d + 1;

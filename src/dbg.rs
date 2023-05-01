@@ -13,7 +13,8 @@ impl<T> FormatProxy for Dbg<T> {
 }
 
 impl<T> FormatProxy for Dbg<T>
-    where T: fmt::Debug
+where
+    T: fmt::Debug,
 {
     default fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)

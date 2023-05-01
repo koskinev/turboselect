@@ -1,6 +1,6 @@
 use std::{hint::black_box, time::Instant};
 
-use select::{select_nth_unstable};
+use select::select_nth_unstable;
 
 mod pcg_rng;
 use pcg_rng::PCGRng;
@@ -49,24 +49,24 @@ fn main() {
     let master = random_u32s(count);
     eprintln!("{} elements", master.len());
 
-    eprintln!("Selecting the 42nd element using the Floyd & Rivest algorithm ...");
+    // eprintln!("Selecting the 42nd element using the Floyd & Rivest algorithm ...");
 
-    timeit(
-        || {
-            let mut data = master.clone();
-            select_nth_unstable(data.as_mut_slice(), 42);
-        },
-        repeat,
-    );
+    // timeit(
+    //     || {
+    //         let mut data = master.clone();
+    //         select_nth_unstable(data.as_mut_slice(), 42);
+    //     },
+    //     repeat,
+    // );
 
-    eprintln!("Selecting the 42nd element using std::slice::select_nth_unstable ...");
-    timeit(
-        || {
-            let mut data = master.clone();
-            data.select_nth_unstable(42);
-        },
-        repeat,
-    );
+    // eprintln!("Selecting the 42nd element using std::slice::select_nth_unstable ...");
+    // timeit(
+    //     || {
+    //         let mut data = master.clone();
+    //         data.select_nth_unstable(42);
+    //     },
+    //     repeat,
+    // );
 
     let mid = master.len() / 2;
     eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
@@ -78,12 +78,12 @@ fn main() {
         repeat,
     );
 
-    eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
-    timeit(
-        || {
-            let mut data = master.clone();
-            data.select_nth_unstable(mid);
-        },
-        repeat,
-    );
+    // eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
+    // timeit(
+    //     || {
+    //         let mut data = master.clone();
+    //         data.select_nth_unstable(mid);
+    //     },
+    //     repeat,
+    // );
 }
