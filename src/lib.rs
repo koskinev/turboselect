@@ -1,7 +1,12 @@
 #![feature(specialization)]
+#![feature(strict_provenance)]
+#![feature(sized_type_properties)]
+#![feature(maybe_uninit_slice)]
+#![feature(ptr_sub_ptr)]
 
 mod dbg;
 mod pcg_rng;
+mod slice_sort;
 use std::cmp::Ordering;
 
 use dbg::Dbg;
