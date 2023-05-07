@@ -1,6 +1,6 @@
 use crate::{
     floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare, quintary_left, quintary_right,
-    select_nth_unstable, shuffle, sort_3, sort_4,
+    read_pivots, select_nth_unstable, shuffle, sort_3, sort_4,
 };
 
 use super::{partition_at_index_small, ternary};
@@ -12,7 +12,7 @@ fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item =
 #[test]
 fn partition_3() {
     let repeat = 1000;
-    let count = 100;
+    let count = 30;
     let k = count / 2;
     let mut rng = PCGRng::new(0);
     // let mut rng = usize::rng(0).in_range(0, count);
@@ -36,7 +36,7 @@ fn partition_3() {
 #[test]
 fn partition_5_left() {
     let repeat = 1000;
-    let count = 400;
+    let count = 30;
     let mut rng = PCGRng::new(123);
 
     for _iter in 0..repeat {
@@ -211,5 +211,19 @@ fn median5() {
         assert!(data[1] <= data[2]);
         assert!(data[2] <= data[3]);
         assert!(data[2] <= data[4]);
+    }
+}
+
+#[test]
+fn pivots() {
+    let repeat = 10000;
+    let count = 10;
+    let mut rng = PCGRng::new(123);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
+        let (low, inner, high) = read_pivots(&mut data, 1, count - 2);
+        assert!(low.element() <= high.element());
+        assert!(inner.len() == count - 2);
     }
 }

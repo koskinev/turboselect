@@ -17,7 +17,85 @@ mod tests;
 
 const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
+const BLOCK: usize = 4;
+const BLOCK_END: usize = BLOCK - 1;
 const CUT: usize = 1000;
+
+/// Hole represents a hole in a slice i.e., an index without valid value
+/// (because it was moved from or duplicated).
+/// In drop, `Hole` will restore the slice by filling the hole
+/// position with the value that was originally removed.
+struct Hole<'a, T: 'a> {
+    data: &'a mut [T],
+    elt: core::mem::ManuallyDrop<T>,
+    pos: usize,
+}
+
+impl<'a, T> Hole<'a, T> {
+    /// Create a new `Hole` at index `pos`.
+    ///
+    /// Unsafe because pos must be within the data slice.
+    #[inline]
+    unsafe fn new(data: &'a mut [T], pos: usize) -> Self {
+        debug_assert!(pos < data.len());
+        // SAFE: pos should be inside the slice
+        let elt = unsafe { core::ptr::read(data.get_unchecked(pos)) };
+        Hole {
+            data,
+            elt: core::mem::ManuallyDrop::new(elt),
+            pos,
+        }
+    }
+
+    #[inline]
+    fn pos(&self) -> usize {
+        self.pos
+    }
+
+    /// Returns a reference to the element removed.
+    #[inline]
+    fn element(&self) -> &T {
+        &self.elt
+    }
+
+    /// Returns a reference to the element at `index`.
+    ///
+    /// Unsafe because index must be within the data slice and not equal to pos.
+    #[inline]
+    unsafe fn get(&self, index: usize) -> &T {
+        debug_assert!(index != self.pos);
+        debug_assert!(index < self.data.len());
+        unsafe { self.data.get_unchecked(index) }
+    }
+
+    /// Takes the element at `index` and moves it to the previous hole position, changing the
+    /// hole to `index`. 
+    ///
+    /// Unsafe because index must be within the data slice and not equal to pos.
+    #[inline]
+    unsafe fn move_to(&mut self, index: usize) {
+        debug_assert!(index != self.pos);
+        debug_assert!(index < self.data.len());
+        unsafe {
+            let ptr = self.data.as_mut_ptr();
+            let index_ptr: *const _ = ptr.add(index);
+            let hole_ptr = ptr.add(self.pos);
+            core::ptr::copy_nonoverlapping(index_ptr, hole_ptr, 1);
+        }
+        self.pos = index;
+    }
+}
+
+impl<T> Drop for Hole<'_, T> {
+    #[inline]
+    fn drop(&mut self) {
+        // fill the hole again
+        unsafe {
+            let pos = self.pos;
+            core::ptr::copy_nonoverlapping(&*self.elt, self.data.get_unchecked_mut(pos), 1);
+        }
+    }
+}
 
 fn floyd_rivest_select<T: Ord>(
     mut data: &mut [T],
@@ -194,10 +272,15 @@ fn prepare<T: Ord>(data: &mut [T], index: usize, rng: &mut PCGRng) -> (usize, us
     let (v_a, v_d) = floyd_rivest_select(&mut data[..s], v, rng);
     if u < v_a {
         let (u_a, u_d) = floyd_rivest_select(&mut data[..v_a], u, rng);
-        let q = len - s + v_a;
 
-        swap_parts(data, v_a, len - 1, s - v_a);
-        (u_a, u_d, q, q + v_d - v_a)
+        // Move sample elements greater than the higher pivot to the end of the slice
+        unordered_swap(data, v_d + 1, len - 1, s - v_d - 1);
+
+        // Move sample elements equal to the higher pivot before the elements just
+        // moved to the end of the slice
+        unordered_swap(data, v_a, len - s + v_d, v_d - v_a + 1);
+
+        (u_a, u_d, len - s + v_a, len - s + v_d)
     } else {
         (v_a, v_d, v_a, v_d)
     }
@@ -335,13 +418,13 @@ fn quintary_left<T: Ord>(
     let c = d + q - e;
 
     // Swap parts 2 and 3.
-    swap_parts(data, l, j, (j + 1 - p).min(p - l));
+    unordered_swap(data, l, j, (j + 1 - p).min(p - l));
 
     // Swap parts 1 and 2.
-    swap_parts(data, s, b - 1, (l - s).min(j + 1 - p));
+    unordered_swap(data, s, b - 1, (l - s).min(j + 1 - p));
 
     // Swap parts 4 and 5.
-    swap_parts(data, i, e, (q + 1 - i).min(e - q));
+    unordered_swap(data, i, e, (q + 1 - i).min(e - q));
 
     // The slice is now partitioned as follows:
 
@@ -496,13 +579,13 @@ fn quintary_right<T: Ord>(
     let c = d + h - e;
 
     // Swap parts 3 and 4
-    swap_parts(data, i, h, (q + 1 - i).min(h - q));
+    unordered_swap(data, i, h, (q + 1 - i).min(h - q));
 
     // Swap parts 4 and 5
-    swap_parts(data, c + 1, e, (e - h).min(q + 1 - i));
+    unordered_swap(data, c + 1, e, (e - h).min(q + 1 - i));
 
     // Swap parts 1 and 2
-    swap_parts(data, s, b - 1, (p - s).min(i - p));
+    unordered_swap(data, s, b - 1, (p - s).min(i - p));
 
     // The slice is now partitioned as follows:
 
@@ -523,6 +606,24 @@ fn quintary_right<T: Ord>(
     // }
 
     (a, b, c, d)
+}
+
+/// Rotates the elements so that the element at index `a_src` moves to index `a_dst`,
+/// the element at index `b_src` moves to index `b_dst`.
+///
+/// Panics if any of the indices are out of bounds.
+fn rotate_4<T>(data: &mut [T], a_src: usize, a_dst: usize, b_src: usize, b_dst: usize) {
+    let a_src = &mut data[a_src] as *mut T;
+    let a_dst = &mut data[a_dst] as *mut T;
+    let b_src = &mut data[b_src] as *mut T;
+    let b_dst = &mut data[b_dst] as *mut T;
+    unsafe {
+        let tmp = std::mem::ManuallyDrop::new(std::ptr::read(a_src));
+        b_dst.copy_to(a_src, 1);
+        b_src.copy_to(b_dst, 1);
+        a_dst.copy_to(b_src, 1);
+        a_dst.copy_from(&*tmp, 1);
+    }
 }
 
 fn sample_size(n: usize) -> usize {
@@ -551,9 +652,16 @@ fn shuffle<T>(data: &mut [T], count: usize, rng: &mut PCGRng) {
     }
 }
 
-fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> usize {
-    swap(data, a, b);
-    0
+/// Swaps `a` and `b` if `a > b`, and returns true if the swap was performed.
+fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
+    let swap = data[a] > data[b];
+    let offset = (b as isize - a as isize) * swap as isize;
+    unsafe {
+        let a = &mut data[a] as *mut T;
+        let x = a.offset(offset);
+        core::ptr::swap(a, x);
+        swap
+    }
 }
 
 fn sort_3<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize) -> usize {
@@ -580,16 +688,26 @@ fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
     (data[a] > data[b]).then(|| data.swap(a, b)).is_some()
 }
 
-/// Swaps the subslice of `count` elements starting from `left` with the equal length subslice
-/// ending at `right`.
-///
-/// Panics if `left` or `right` are out of bounds, or if the subslices overlap.
-fn swap_parts<T: Ord>(data: &mut [T], left: usize, right: usize, count: usize) {
+/// Performs an unordered swap of the first `count` elements starting from `left` with the last
+/// `count` elements ending at and including`right`.
+fn unordered_swap<T: Ord>(data: &mut [T], mut left: usize, mut right: usize, count: usize) {
+    if count == 0 {
+        return;
+    }
+    debug_assert!(left + count <= right);
+    debug_assert!(right <= data.len());
     let inner = data[left..=right].as_mut();
-    let (left, tail) = inner.split_at_mut(count);
-    let mid = tail.len() - count;
-    let right = tail[mid..].as_mut();
-    left.swap_with_slice(right);
+    (left, right) = (0, inner.len() - 1);
+    unsafe {
+        let mut hole = Hole::new(inner, left);
+        hole.move_to(right);
+        for _ in 1..count {
+            left += 1;
+            hole.move_to(left);
+            right -= 1;
+            hole.move_to(right);
+        }
+    }
 }
 
 /// Partitions `data` into three parts, using the element at `index` as the pivot. Returns `(a, d)`,
@@ -692,10 +810,10 @@ fn ternary<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
     // }
 
     // Swap parts 1 and 2
-    swap_parts(data, l, j, (p - l).min(j + 1 - p));
+    unordered_swap(data, l, j, (p - l).min(j + 1 - p));
 
     // Swap parts 3 and 4
-    swap_parts(data, i, r, (r - q).min(q + 1 - i));
+    unordered_swap(data, i, r, (r - q).min(q + 1 - i));
 
     let a = l + j + 1 - p;
     let d = i + r - q - 1;
@@ -711,4 +829,233 @@ fn ternary<T: Ord>(data: &mut [T], index: usize) -> (usize, usize) {
     //     }
     // }
     (a, d)
+}
+
+fn l_partition<T: Ord>(data: &mut [T], u: usize, v: usize) -> (usize, usize) {
+    // Optimal Partitioning for Dual-Pivot Quicksort by Aumüller & Dietzfelbinger, Algorithm 3:
+    //
+    // procedure L-Partition(A, p, q, left, right, pos_p, pos_q)
+    //     i ← left + 1; k ← right − 1; j ← i;
+    //     while j ≤ k do
+    //         while q < A[k] do
+    //             k ← k − 1;
+    //         // At this point A[k] <= q
+    //         while A[j] < q do
+    //             if A[j] < p then
+    //                 swap A[i] and A[j];
+    //                 i ← i + 1;
+    //             j ← j + 1;
+    //         // At this point A[j] >= q and A[j] >= p
+    //         if j < k then
+    //             if A[k] > p then
+    //                 rotate3(A[k], A[j], A[i]);
+    //                 i ← i + 1;
+    //             else
+    //                 swap A[j] and A[k];
+    //             k ← k − 1;
+    //         j ← j + 1;
+    //     swap A[left] and A[i − 1];
+    //     swap A[right] and A[k + 1];
+    //     pos_p ← i − 1; pos_q ← k + 1;
+    //
+    // The resulting partition is:
+    //   +-------+-------------+-------+
+    //   | x < p | p <= x <= q | x > q |
+    //   +-------+-------------+-------+
+    //         i  j             k
+
+    // The slice should have at least 2 * BLOCK elements.
+    let len = data.len();
+    assert!(len >= 2 * BLOCK);
+
+    // Put the smaller pivot at the beginning of the slice and the larger at the end.
+    sort_2(data, u, v);
+    rotate_4(data, u, 0, v, len - 1);
+
+    let (mut i, mut k, mut j) = (1, len - 1, 1);
+    // unsafe {
+    //     // Read the pivots onto the stack
+    //     let (p, _p_guard) = read_pivot(data, 0);
+    //     let (q, _q_guard) = read_pivot(data, len - 1);
+
+    //     let origin = data.as_mut_ptr().add(1);
+
+    //     let mut to_right = PtrCache::new(origin, |x| x > q);
+    //     let mut to_mid_or_right = PtrCache::new(origin, |x| x > p);
+
+    //     let mut to_left = PtrCache::new_back(origin, len - 1, |x| x < p);
+    //     let mut to_mid_or_left = PtrCache::new_back(origin, len - 1, |x| x < q);
+
+    //     // Swap elements between left_to_right and right_to_left
+    // }
+
+    (i - 1, k + 1)
+}
+
+/// Moves the elements at indices `p` and `q` to the beginning and end of the slice so that
+/// `data[p] <= data[q]`. Then returns the pivots and the interior of the slice as a triple 
+/// `low, mid, high`.
+fn read_pivots<T: Ord>(data: &mut [T], p: usize, q: usize) -> (Hole<T>, &mut [T], Hole<T>) {
+    debug_assert!(data.len() >= 2);
+    sort_2(data, p, q);
+    unsafe {
+        let last = data.len() - 1;
+        let mut hole =  Hole::new(data, 0);
+        hole.move_to(p);
+        hole.move_to(last);
+        hole.move_to(q);
+    }
+    let (head, tail) = data.split_at_mut(1);
+    let (mid, tail) = tail.split_at_mut(tail.len() - 1);
+    let head = unsafe { Hole::new(head, 0) };
+    let tail = unsafe { Hole::new(tail, 0) };
+    (head, mid, tail)
+}
+
+/// A cache of pointers to elements that satisfy a predicate.
+struct PtrCache<T, F>
+where
+    F: Fn(&T) -> bool,
+{
+    /// The pointer to the first element of the slice.
+    origin: *mut T,
+
+    /// The index of the first element in the block.
+    index: usize,
+
+    /// The offsets from the start of the block to the elements that satisfy the predicate.
+    offsets: [std::mem::MaybeUninit<u8>; BLOCK],
+
+    /// The index of the first initialized offset.
+    init: u8,
+
+    /// The number of initialized offsets.
+    len: u8,
+
+    /// The predicate to test the elements.
+    test: F,
+}
+
+impl<T, F> PtrCache<T, F>
+where
+    F: Fn(&T) -> bool,
+{
+    /// Returns the number of elements that satisfy the predicate.
+    fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Returns the index of the first element of the block.
+    fn start(&self) -> usize {
+        self.index
+    }
+
+    /// Returns the index of the last element of the block.
+    fn end(&self) -> usize {
+        self.index + self.len()
+    }
+
+    /// Returns a new cache with the elements from the current cache that also satisfy the new
+    /// predicate.
+    fn filter<G>(&self, also: G) -> PtrCache<T, G>
+    where
+        G: Fn(&T) -> bool,
+    {
+        let mut cache = PtrCache {
+            origin: self.origin,
+            index: self.index,
+            offsets: self.offsets,
+            init: self.init,
+            len: self.len,
+            test: also,
+        };
+        let mut index = cache.init;
+        let mut last = cache.init + cache.len - 1;
+        unsafe {
+            while index <= last {
+                let offset = self.offsets[index as usize].assume_init();
+                if !(cache.test)(&*cache.origin.add(cache.index + offset as usize)) {
+                    cache.offsets.swap(index as usize, last as usize);
+                    last -= 1;
+                } else {
+                    index += 1;
+                }
+            }
+            cache.len = last - index + 1;
+        }
+        cache
+    }
+
+    /// Creates a new cache beginning at `origin`.
+    unsafe fn new(origin: *mut T, test: F) -> Self {
+        let mut this = Self {
+            origin,
+            index: 0,
+            offsets: std::mem::MaybeUninit::uninit().assume_init(),
+            init: 0,
+            len: 0,
+            test,
+        };
+        this.scan();
+        this
+    }
+
+    /// Creates a new cache ending at `origin.add(len)`.
+    unsafe fn new_back(origin: *mut T, len: usize, test: F) -> Self {
+        let mut this = Self {
+            origin,
+            index: len - BLOCK,
+            offsets: std::mem::MaybeUninit::uninit().assume_init(),
+            init: 0,
+            len: 0,
+            test,
+        };
+        this.scan();
+        this
+    }
+
+    /// Scans for elements that satisfy the predicate.
+    unsafe fn scan(&mut self) {
+        let mut offset = 0;
+        self.len = 0;
+        while offset < BLOCK {
+            self.offsets[self.len as usize].write(offset as u8);
+            self.len += (self.test)(unsafe { &*self.origin.add(self.index + offset) }) as u8;
+            offset += 1;
+        }
+    }
+
+    /// Moves the cache to the next block of elements.
+    unsafe fn next(&mut self) {
+        while self.len() == 0 {
+            self.index += BLOCK;
+            self.scan();
+        }
+    }
+
+    /// Moves the cache to the previous block of elements.
+    unsafe fn prev(&mut self) {
+        while self.len() == 0 {
+            self.index -= BLOCK;
+            self.scan();
+        }
+    }
+
+    /// Pops the last pointer from the cache.
+    unsafe fn pop(&mut self) -> *mut T {
+        self.len -= 1;
+        let offset = self
+            .offsets
+            .get_unchecked((self.init + self.len) as usize)
+            .assume_init();
+        self.origin.add(self.index + offset as usize)
+    }
+
+    /// Pops the first pointer from the cache.
+    unsafe fn pop_front(&mut self) -> *mut T {
+        let offset = self.offsets.get_unchecked(self.init as usize).assume_init();
+        self.init += 1;
+        self.len -= 1;
+        self.origin.add(self.index + offset as usize)
+    }
 }
