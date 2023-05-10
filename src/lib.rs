@@ -7,7 +7,8 @@
 mod dbg;
 mod pcg_rng;
 mod slice_sort;
-use std::cmp::Ordering;
+use core::mem::MaybeUninit;
+use std::{cmp::Ordering, ops::Index};
 
 use dbg::Dbg;
 use pcg_rng::PCGRng;
@@ -18,7 +19,6 @@ mod tests;
 const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
 const BLOCK: usize = 4;
-const BLOCK_END: usize = BLOCK - 1;
 const CUT: usize = 1000;
 
 /// Hole represents a hole in a slice i.e., an index without valid value
@@ -69,7 +69,7 @@ impl<'a, T> Hole<'a, T> {
     }
 
     /// Takes the element at `index` and moves it to the previous hole position, changing the
-    /// hole to `index`. 
+    /// hole to `index`.
     ///
     /// Unsafe because index must be within the data slice and not equal to pos.
     #[inline]
@@ -893,23 +893,135 @@ fn l_partition<T: Ord>(data: &mut [T], u: usize, v: usize) -> (usize, usize) {
 }
 
 /// Moves the elements at indices `p` and `q` to the beginning and end of the slice so that
-/// `data[p] <= data[q]`. Then returns the pivots and the interior of the slice as a triple 
+/// `data[p] <= data[q]`. Then returns the pivots and the interior of the slice as a triple
 /// `low, mid, high`.
 fn read_pivots<T: Ord>(data: &mut [T], p: usize, q: usize) -> (Hole<T>, &mut [T], Hole<T>) {
     debug_assert!(data.len() >= 2);
     sort_2(data, p, q);
-    unsafe {
-        let last = data.len() - 1;
-        let mut hole =  Hole::new(data, 0);
-        hole.move_to(p);
-        hole.move_to(last);
-        hole.move_to(q);
-    }
+    data.swap(0, p);
+    data.swap(data.len() - 1, q);
     let (head, tail) = data.split_at_mut(1);
     let (mid, tail) = tail.split_at_mut(tail.len() - 1);
     let head = unsafe { Hole::new(head, 0) };
     let tail = unsafe { Hole::new(tail, 0) };
     (head, mid, tail)
+}
+
+fn ternary_block_partition_left<T: Ord>(
+    data: &mut [T],
+    u: usize,
+    v: usize,
+    is_less: impl Fn(&T, &T) -> bool,
+) -> (usize, usize) {
+
+    sort_2(data, u, v);
+    data.swap(0, u);
+    data.swap(data.len() - 1, v);
+    let (p, tail) = data.split_first_mut().unwrap();
+    let (q, mid) = tail.split_last_mut().unwrap();
+    let n = mid.len();
+    
+    let (mut i, mut j, mut k) = (0, 0, 0);
+    let mut le_q = 0;
+    let mut lt_p = 0;
+    unsafe {
+        let mut block: [MaybeUninit<u8>; BLOCK] = MaybeUninit::uninit().assume_init();
+        while k < n {
+            // data[..i] < p <= data[i..j] <= q < data[j..k] 
+            
+            let t = (n - k).min(BLOCK).try_into().unwrap_or(BLOCK as u8);
+        
+            // Scan elements after k. If elem <= q, place it between j and k. 
+            for o in 0..t {
+                let elem = mid.get_unchecked(k + o as usize);
+                block[le_q].write(o);
+                le_q += !is_less(q, elem) as usize;
+            }
+            for (c, u) in block.iter().enumerate().take(le_q) {
+                let b = u.assume_init() as usize;
+                mid.swap(j + c, k + b);
+            }
+            k += t as usize;
+
+            // Scan the moved elements. If elem < p, place it before i.
+            for c in 0..(le_q as u8) {
+                let elem = mid.get_unchecked(j + c as usize);
+                block[lt_p].write(c);
+                lt_p += is_less(elem, p) as usize;
+            }
+            for u in block.iter().take(lt_p) {
+                let b = u.assume_init() as usize;
+                mid.swap(i, j + b);
+                i += 1;
+            }
+
+            // Reset counters
+            (lt_p, le_q) = (0, 0);
+            j += le_q;
+        }
+    }
+    let (u, v) = (i, j + 1);
+    data.swap(u, 0);
+    data.swap(v, data.len() - 1);
+
+    (u, v)
+}
+
+fn ternary_block_partition_right<T: Ord>(
+    data: &mut [T],
+    u: usize,
+    v: usize,
+    is_greater: impl Fn(&T, &T) -> bool,
+) -> (usize, usize) {
+    sort_2(data, u, v);
+    data.swap(0, u);
+    data.swap(data.len() - 1, v);
+    let (p, tail) = data.split_first_mut().unwrap();
+    let (q, mid) = tail.split_last_mut().unwrap();
+    let n = mid.len();
+    let last = n - 1;
+
+    let (mut i, mut j, mut k) = (last, last, last);
+    let mut ge_p = 0;
+    let mut gt_q = 0;
+    unsafe {
+        let mut block: [MaybeUninit<u8>; BLOCK] = MaybeUninit::uninit().assume_init();
+        while i > 0 {
+            // data[..i] < p <= data[i..j] <= q < data[j..k] 
+            let t = i.min(BLOCK).try_into().unwrap_or(BLOCK as u8);
+
+            // Scan elements before i. If elem >= p, place it between j and k.
+            for o in 0..t {
+                let elem = mid.get_unchecked(i - o as usize);
+                block[ge_p].write(o);
+                ge_p += !is_greater(p, elem) as usize;
+            }
+            for (c, u) in block.iter().enumerate().take(ge_p) {
+                let b = u.assume_init() as usize;
+                mid.swap(j - c, i - b);
+            }
+            i -= t as usize;
+
+            // Scan the moved elements. If elem > q, move it to the right of k.
+            for o in 0..(ge_p as u8) {
+                let elem = mid.get_unchecked(j - o as usize);
+                block[gt_q].write(o);
+                gt_q += is_greater(elem, q) as usize;
+            }
+            for u in block.iter().take(gt_q) {
+                let b = u.assume_init() as usize;
+                mid.swap(k, j - b);
+                k -= 1;
+            }
+            j -= ge_p;
+            (ge_p, gt_q) = (0, 0);
+        }
+    }
+    let (u, v) = (last - i, last - j - 1);
+    data.swap(u, 0);
+    data.swap(v, data.len() - 1);
+
+    (u, v)
 }
 
 /// A cache of pointers to elements that satisfy a predicate.

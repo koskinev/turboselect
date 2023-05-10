@@ -1,6 +1,6 @@
 use crate::{
-    floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare, quintary_left, quintary_right,
-    read_pivots, select_nth_unstable, shuffle, sort_3, sort_4,
+    ternary_block_partition_left, floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare,
+    quintary_left, quintary_right, read_pivots, select_nth_unstable, shuffle, sort_3, sort_4, ternary_block_partition_right,
 };
 
 use super::{partition_at_index_small, ternary};
@@ -28,6 +28,56 @@ fn partition_3() {
                 i if i < low => assert!(elem < &pivot),
                 i if i > high => assert!(elem > &pivot),
                 _ => assert!(elem == &pivot),
+            }
+        }
+    }
+}
+
+#[test]
+fn lomuto_2_left() {
+    let repeat = 1000;
+    let count = 300;
+    let mut rng = PCGRng::new(0);
+    // let mut rng = usize::rng(0).in_range(0, count);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
+
+        let (first, last) = (data[0], data[count - 1]);
+        let (low, high) = (first.min(last), last.max(first));
+        let (p, q) = ternary_block_partition_left(&mut data, 0, count - 1, |a, b| a < b);
+        assert!(data[p] == low && data[q] == high);
+
+        for (index, elem) in data.iter().enumerate() {
+            match index {
+                i if i < p => assert!(elem < &low),
+                i if i > q => assert!(elem > &high),
+                _ => assert!(&low <= elem && elem <= &high),
+            }
+        }
+    }
+}
+
+#[test]
+fn lomuto_2_right() {
+    let repeat = 1000;
+    let count = 20;
+    let mut rng = PCGRng::new(0);
+    // let mut rng = usize::rng(0).in_range(0, count);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
+
+        let (first, last) = (data[0], data[count - 1]);
+        let (low, high) = (first.min(last), last.max(first));
+        let (p, q) = ternary_block_partition_right(&mut data, 0, count - 1, |a, b| a < b);
+        assert!(data[p] == low && data[q] == high);
+
+        for (index, elem) in data.iter().enumerate() {
+            match index {
+                i if i < p => assert!(elem < &low),
+                i if i > q => assert!(elem > &high),
+                _ => assert!(&low <= elem && elem <= &high),
             }
         }
     }
