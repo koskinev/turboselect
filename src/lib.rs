@@ -18,7 +18,7 @@ mod tests;
 
 const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
-const BLOCK: usize = 4;
+const BLOCK: usize = 128;
 const CUT: usize = 1000;
 
 /// Hole represents a hole in a slice i.e., an index without valid value
@@ -917,47 +917,61 @@ fn ternary_block_partition_left<T: Ord>(
     sort_2(data, u, v);
     data.swap(0, u);
     data.swap(data.len() - 1, v);
-    let (p, tail) = data.split_first_mut().unwrap();
-    let (q, mid) = tail.split_last_mut().unwrap();
+    let (low, tail) = data.split_first_mut().unwrap();
+    let (high, mid) = tail.split_last_mut().unwrap();
     let n = mid.len();
     
     let (mut i, mut j, mut k) = (0, 0, 0);
-    let mut le_q = 0;
-    let mut lt_p = 0;
+    let mut num_le_q = 0;
+    let mut num_lt_p = 0;
     unsafe {
         let mut block: [MaybeUninit<u8>; BLOCK] = MaybeUninit::uninit().assume_init();
         while k < n {
-            // data[..i] < p <= data[i..j] <= q < data[j..k] 
-            
-            let t = (n - k).min(BLOCK).try_into().unwrap_or(BLOCK as u8);
-        
-            // Scan elements after k. If elem <= q, place it between j and k. 
-            for o in 0..t {
-                let elem = mid.get_unchecked(k + o as usize);
-                block[le_q].write(o);
-                le_q += !is_less(q, elem) as usize;
-            }
-            for (c, u) in block.iter().enumerate().take(le_q) {
-                let b = u.assume_init() as usize;
-                mid.swap(j + c, k + b);
-            }
-            k += t as usize;
 
-            // Scan the moved elements. If elem < p, place it before i.
-            for c in 0..(le_q as u8) {
-                let elem = mid.get_unchecked(j + c as usize);
-                block[lt_p].write(c);
-                lt_p += is_less(elem, p) as usize;
+            // The first part contains elements < low. 
+            debug_assert!(mid[..i].iter().all(|x| is_less(x, low)));
+
+            // The middle part contains elements between low and high.
+            debug_assert!(mid[i..j].iter().all(|x| !is_less(x, low)));
+            debug_assert!(mid[i..j].iter().all(|x| !is_less(high, x)));
+
+            // The last part contains elements > high. Elements after k have not been scanned 
+            // yet and are unordered.
+            debug_assert!(mid[j..k].iter().all(|x| is_less(high, x)));
+
+            let size = (n - k).min(BLOCK).try_into().unwrap_or(BLOCK as u8);
+        
+            // Scan BLOCK elements beginning at k. Then put each elem <= low to the middle part
+            // by swapping the element with an element in the range j..k. Since elements in j..k 
+            // are > high, this essentially moves the third part towards the end of the slice.
+            for offset in 0..size {
+                block[num_le_q].write(offset);
+                let elem = mid.get_unchecked(k + offset as usize);
+                num_le_q += !is_less(high, elem) as usize;
             }
-            for u in block.iter().take(lt_p) {
-                let b = u.assume_init() as usize;
-                mid.swap(i, j + b);
+            for (offset_j, offset_k) in block.iter().enumerate().take(num_le_q) {
+                let offset_k = offset_k.assume_init() as usize;
+                mid.swap(j + offset_j, k + offset_k);
+            }
+            
+            // Scan the elements moved to j..k in the previous step. If elem < low, swap it with 
+            // the element at i and increment i. Since the element at i is known to be >= low, the
+            // the it is kept in the middle. The first part grows by one element. 
+            for offset in 0..(num_le_q as u8) {
+                block[num_lt_p].write(offset);
+                let elem = mid.get_unchecked(j + offset as usize);
+                num_lt_p += is_less(elem, low) as usize;
+            }
+            for offset_j in block.iter().take(num_lt_p) {
+                let offset_j = offset_j.assume_init() as usize;
+                mid.swap(i, j + offset_j);
                 i += 1;
             }
+            k += size as usize;
+            j += num_le_q;
 
-            // Reset counters
-            (lt_p, le_q) = (0, 0);
-            j += le_q;
+            // Reset the counters
+            (num_lt_p, num_le_q) = (0, 0);
         }
     }
     let (u, v) = (i, j + 1);
