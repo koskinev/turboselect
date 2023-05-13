@@ -1,6 +1,6 @@
 use crate::{
-    ternary_block_partition_left, floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare,
-    quintary_left, quintary_right, read_pivots, select_nth_unstable, shuffle, sort_3, sort_4, ternary_block_partition_right,
+    ternary_block_partition_right, floyd_rivest_select, median_of_5, pcg_rng::PCGRng, prepare,
+    quintary_left, quintary_right, read_pivots, select_nth_unstable, shuffle, sort_3, sort_4, ternary_block_partition_left,
 };
 
 use super::{partition_at_index_small, ternary};
@@ -45,7 +45,7 @@ fn lomuto_2_left() {
 
         let (first, last) = (data[0], data[count - 1]);
         let (low, high) = (first.min(last), last.max(first));
-        let (p, q) = ternary_block_partition_left(&mut data, 0, count - 1, |a, b| a < b);
+        let (p, q) = ternary_block_partition_right(&mut data, 0, count - 1, |a, b| a < b);
         assert!(data[p] == low && data[q] == high);
 
         for (index, elem) in data.iter().enumerate() {
@@ -70,7 +70,7 @@ fn lomuto_2_right() {
 
         let (first, last) = (data[0], data[count - 1]);
         let (low, high) = (first.min(last), last.max(first));
-        let (p, q) = ternary_block_partition_right(&mut data, 0, count - 1, |a, b| a < b);
+        let (p, q) = ternary_block_partition_left(&mut data, 0, count - 1, |a, b| a < b);
         assert!(data[p] == low && data[q] == high);
 
         for (index, elem) in data.iter().enumerate() {

@@ -907,88 +907,26 @@ fn read_pivots<T: Ord>(data: &mut [T], p: usize, q: usize) -> (Hole<T>, &mut [T]
     (head, mid, tail)
 }
 
+type Block = [MaybeUninit<u8>; BLOCK];
+
+
+/// Partitions the slice into three parts, using the elements at indices `u` and `v` as pivots.
+/// Returns the indices of the first and last element of the middle part as a tuple `(p, q)`.
+/// 
+/// The resulting partition is:
+/// ´´´text
+/// ┌───────┬───────────────────┬──────┐
+/// │ < low │ low <= .. <= high │ high │
+/// └───────┴───────────────────┴──────┘
+///          p                 q
+/// ´´´
+/// 
+/// This variant of the partitioning algorithm tests the elements first against the lower pivot
+/// and conditionally against the higher pivot. If most elements are expected to be less than 
+/// the lower pivot, this variant is faster than `ternary_block_partition_right`. 
+/// 
+/// Panics if the indices are out of bounds.
 fn ternary_block_partition_left<T: Ord>(
-    data: &mut [T],
-    u: usize,
-    v: usize,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
-    sort_2(data, u, v);
-    data.swap(0, u);
-    data.swap(data.len() - 1, v);
-    let (low, tail) = data.split_first_mut().unwrap();
-    let (high, mid) = tail.split_last_mut().unwrap();
-    let n = mid.len();
-
-    let (mut i, mut j, mut k) = (0, 0, 0);
-    let mut num_lt_low = 0;
-    let mut num_le_high = 0;
-    unsafe {
-        let mut block: [MaybeUninit<u8>; BLOCK] = MaybeUninit::uninit().assume_init();
-        while k < n {
-            let size = (n - k).min(BLOCK) as u8;
-
-            //                                       | block |
-            // ┌───────┬────────────────────┬────────┬─────────────┐
-            // │ < low │ low <= ... <= high │ > high │   ? .. ?    │
-            // └───────┴────────────────────┴────────┴─────────────┘
-            //          i                    j        k
-            //
-            // Scan the block of elements beginning at k. Then put each element x <= high to the
-            // middle part by swapping it with an element in the range j..k. Since elements in
-            // j..k are x > high, this creates a temporary part between the middle an third parts,
-            // where elements belong to either the first or the middle part. The third part towards
-            // the end of the slice.
-            for offset in 0..size {
-                block[num_le_high].write(offset);
-                let elem = mid.get_unchecked(k + offset as usize);
-                num_le_high += !is_less(high, elem) as usize;
-            }
-            for (offset_j, offset_k) in block.iter().enumerate().take(num_le_high) {
-                let offset_k = offset_k.assume_init() as usize;
-                mid.swap(j + offset_j, k + offset_k);
-            }
-
-            // Scan the elements moved to the temporary part in the previous step. If x < low, swap
-            // the element with the first element of the middle part (the element at i) and
-            // increment i. Since the element at i is known to be x >= low, this moves
-            // the middle part to the right by one element. The first part grows by one
-            // element.
-            for offset in 0..(num_le_high as u8) {
-                block[num_lt_low].write(offset);
-                let elem = mid.get_unchecked(j + offset as usize);
-                num_lt_low += is_less(elem, low) as usize;
-            }
-            for offset_j in block.iter().take(num_lt_low) {
-                let offset_j = offset_j.assume_init() as usize;
-                mid.swap(i, j + offset_j);
-                i += 1;
-            }
-            k += size as usize;
-            j += num_le_high;
-
-            // Reset the counters
-            (num_lt_low, num_le_high) = (0, 0);
-
-            // The first part contains elements x < low.
-            debug_assert!(mid[..i].iter().all(|x| is_less(x, low)));
-
-            // The middle part contains elements low <= x <= high.
-            debug_assert!(mid[i..j].iter().all(|x| !is_less(x, low)));
-            debug_assert!(mid[i..j].iter().all(|x| !is_less(high, x)));
-
-            // The last part contains elements x > high. Elements after k have not been scanned
-            // yet and are unordered.
-            debug_assert!(mid[j..k].iter().all(|x| is_less(high, x)));
-        }
-    }
-    let (u, v) = (i, j + 1);
-    data.swap(u, 0);
-    data.swap(v, data.len() - 1);
-
-    (u, v)
-}
-fn ternary_block_partition_right<T: Ord>(
     data: &mut [T],
     u: usize,
     v: usize,
@@ -1005,7 +943,7 @@ fn ternary_block_partition_right<T: Ord>(
     let mut num_ge_low = 0;
     let mut num_gt_high = 0;
     unsafe {
-        let mut block: [MaybeUninit<u8>; BLOCK] = MaybeUninit::uninit().assume_init();
+        let mut block: Block = MaybeUninit::uninit().assume_init();
         while k > 0 {
             let size = (k + 1).min(BLOCK) as u8;
 
@@ -1079,150 +1017,102 @@ fn ternary_block_partition_right<T: Ord>(
 
     (u, v)
 }
-/// A cache of pointers to elements that satisfy a predicate.
-struct PtrCache<T, F>
-where
-    F: Fn(&T) -> bool,
-{
-    /// The pointer to the first element of the slice.
-    origin: *mut T,
 
-    /// The index of the first element in the block.
-    index: usize,
 
-    /// The offsets from the start of the block to the elements that satisfy the predicate.
-    offsets: [std::mem::MaybeUninit<u8>; BLOCK],
+/// Partitions the slice into three parts, using the elements at indices `u` and `v` as pivots.
+/// Returns the indices of the first and last element of the middle part as a tuple `(p, q)`.
+/// 
+/// The resulting partition is:
+/// ´´´text
+/// ┌───────┬───────────────────┬──────┐
+/// │ < low │ low <= .. <= high │ high │
+/// └───────┴───────────────────┴──────┘
+///          p                 q
+/// ´´´
+/// 
+/// This variant of the partitioning algorithm tests the elements first against the higher pivot
+/// and conditionally against the lower pivot. If most elements are expected to be greater than 
+/// the higher pivot, this variant is faster than `ternary_block_partition_left`. 
+/// 
+/// Panics if the indices are out of bounds.
+fn ternary_block_partition_right<T: Ord>(
+    data: &mut [T],
+    u: usize,
+    v: usize,
+    is_less: impl Fn(&T, &T) -> bool,
+) -> (usize, usize) {
+    sort_2(data, u, v);
+    data.swap(0, u);
+    data.swap(data.len() - 1, v);
+    let (low, tail) = data.split_first_mut().unwrap();
+    let (high, mid) = tail.split_last_mut().unwrap();
+    let n = mid.len();
 
-    /// The index of the first initialized offset.
-    init: u8,
+    let (mut i, mut j, mut k) = (0, 0, 0);
+    let mut num_lt_low = 0;
+    let mut num_le_high = 0;
+    unsafe {
+        let mut block: Block = MaybeUninit::uninit().assume_init();
+        while k < n {
+            let size = (n - k).min(BLOCK) as u8;
 
-    /// The number of initialized offsets.
-    len: u8,
-
-    /// The predicate to test the elements.
-    test: F,
-}
-
-impl<T, F> PtrCache<T, F>
-where
-    F: Fn(&T) -> bool,
-{
-    /// Returns the number of elements that satisfy the predicate.
-    fn len(&self) -> usize {
-        self.len as usize
-    }
-
-    /// Returns the index of the first element of the block.
-    fn start(&self) -> usize {
-        self.index
-    }
-
-    /// Returns the index of the last element of the block.
-    fn end(&self) -> usize {
-        self.index + self.len()
-    }
-
-    /// Returns a new cache with the elements from the current cache that also satisfy the new
-    /// predicate.
-    fn filter<G>(&self, also: G) -> PtrCache<T, G>
-    where
-        G: Fn(&T) -> bool,
-    {
-        let mut cache = PtrCache {
-            origin: self.origin,
-            index: self.index,
-            offsets: self.offsets,
-            init: self.init,
-            len: self.len,
-            test: also,
-        };
-        let mut index = cache.init;
-        let mut last = cache.init + cache.len - 1;
-        unsafe {
-            while index <= last {
-                let offset = self.offsets[index as usize].assume_init();
-                if !(cache.test)(&*cache.origin.add(cache.index + offset as usize)) {
-                    cache.offsets.swap(index as usize, last as usize);
-                    last -= 1;
-                } else {
-                    index += 1;
-                }
+            //                                       | block |
+            // ┌───────┬────────────────────┬────────┬─────────────┐
+            // │ < low │ low <= ... <= high │ > high │   ? .. ?    │
+            // └───────┴────────────────────┴────────┴─────────────┘
+            //          i                    j        k
+            //
+            // Scan the block of elements beginning at k. Then put each element x <= high to the
+            // middle part by swapping it with an element in the range j..k. Since elements in
+            // j..k are x > high, this creates a temporary part between the middle an third parts,
+            // where elements belong to either the first or the middle part. The third part towards
+            // the end of the slice.
+            for offset in 0..size {
+                block[num_le_high].write(offset);
+                let elem = mid.get_unchecked(k + offset as usize);
+                num_le_high += !is_less(high, elem) as usize;
             }
-            cache.len = last - index + 1;
-        }
-        cache
-    }
+            for (offset_j, offset_k) in block.iter().enumerate().take(num_le_high) {
+                let offset_k = offset_k.assume_init() as usize;
+                mid.swap(j + offset_j, k + offset_k);
+            }
 
-    /// Creates a new cache beginning at `origin`.
-    unsafe fn new(origin: *mut T, test: F) -> Self {
-        let mut this = Self {
-            origin,
-            index: 0,
-            offsets: std::mem::MaybeUninit::uninit().assume_init(),
-            init: 0,
-            len: 0,
-            test,
-        };
-        this.scan();
-        this
-    }
+            // Scan the elements moved to the temporary part in the previous step. If x < low, swap
+            // the element with the first element of the middle part (the element at i) and
+            // increment i. Since the element at i is known to be x >= low, this moves
+            // the middle part to the right by one element. The first part grows by one
+            // element.
+            for offset in 0..(num_le_high as u8) {
+                block[num_lt_low].write(offset);
+                let elem = mid.get_unchecked(j + offset as usize);
+                num_lt_low += is_less(elem, low) as usize;
+            }
+            for offset_j in block.iter().take(num_lt_low) {
+                let offset_j = offset_j.assume_init() as usize;
+                mid.swap(i, j + offset_j);
+                i += 1;
+            }
+            k += size as usize;
+            j += num_le_high;
 
-    /// Creates a new cache ending at `origin.add(len)`.
-    unsafe fn new_back(origin: *mut T, len: usize, test: F) -> Self {
-        let mut this = Self {
-            origin,
-            index: len - BLOCK,
-            offsets: std::mem::MaybeUninit::uninit().assume_init(),
-            init: 0,
-            len: 0,
-            test,
-        };
-        this.scan();
-        this
-    }
+            // Reset the counters
+            (num_lt_low, num_le_high) = (0, 0);
 
-    /// Scans for elements that satisfy the predicate.
-    unsafe fn scan(&mut self) {
-        let mut offset = 0;
-        self.len = 0;
-        while offset < BLOCK {
-            self.offsets[self.len as usize].write(offset as u8);
-            self.len += (self.test)(unsafe { &*self.origin.add(self.index + offset) }) as u8;
-            offset += 1;
+            // The first part contains elements x < low.
+            debug_assert!(mid[..i].iter().all(|x| is_less(x, low)));
+
+            // The middle part contains elements low <= x <= high.
+            debug_assert!(mid[i..j].iter().all(|x| !is_less(x, low)));
+            debug_assert!(mid[i..j].iter().all(|x| !is_less(high, x)));
+
+            // The last part contains elements x > high. Elements after k have not been scanned
+            // yet and are unordered.
+            debug_assert!(mid[j..k].iter().all(|x| is_less(high, x)));
         }
     }
+    let (u, v) = (i, j + 1);
+    data.swap(u, 0);
+    data.swap(v, data.len() - 1);
 
-    /// Moves the cache to the next block of elements.
-    unsafe fn next(&mut self) {
-        while self.len() == 0 {
-            self.index += BLOCK;
-            self.scan();
-        }
-    }
-
-    /// Moves the cache to the previous block of elements.
-    unsafe fn prev(&mut self) {
-        while self.len() == 0 {
-            self.index -= BLOCK;
-            self.scan();
-        }
-    }
-
-    /// Pops the last pointer from the cache.
-    unsafe fn pop(&mut self) -> *mut T {
-        self.len -= 1;
-        let offset = self
-            .offsets
-            .get_unchecked((self.init + self.len) as usize)
-            .assume_init();
-        self.origin.add(self.index + offset as usize)
-    }
-
-    /// Pops the first pointer from the cache.
-    unsafe fn pop_front(&mut self) -> *mut T {
-        let offset = self.offsets.get_unchecked(self.init as usize).assume_init();
-        self.init += 1;
-        self.len -= 1;
-        self.origin.add(self.index + offset as usize)
-    }
+    (u, v)
 }
