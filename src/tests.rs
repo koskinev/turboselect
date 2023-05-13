@@ -61,7 +61,7 @@ fn lomuto_2_left() {
 #[test]
 fn lomuto_2_right() {
     let repeat = 1000;
-    let count = 20;
+    let count = 300;
     let mut rng = PCGRng::new(0);
     // let mut rng = usize::rng(0).in_range(0, count);
 

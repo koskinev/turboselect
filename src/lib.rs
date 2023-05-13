@@ -913,65 +913,73 @@ fn ternary_block_partition_left<T: Ord>(
     v: usize,
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
-
     sort_2(data, u, v);
     data.swap(0, u);
     data.swap(data.len() - 1, v);
     let (low, tail) = data.split_first_mut().unwrap();
     let (high, mid) = tail.split_last_mut().unwrap();
     let n = mid.len();
-    
+
     let (mut i, mut j, mut k) = (0, 0, 0);
-    let mut num_le_q = 0;
-    let mut num_lt_p = 0;
+    let mut num_lt_low = 0;
+    let mut num_le_high = 0;
     unsafe {
         let mut block: [MaybeUninit<u8>; BLOCK] = MaybeUninit::uninit().assume_init();
         while k < n {
+            let size = (n - k).min(BLOCK) as u8;
 
-            // The first part contains elements < low. 
-            debug_assert!(mid[..i].iter().all(|x| is_less(x, low)));
-
-            // The middle part contains elements between low and high.
-            debug_assert!(mid[i..j].iter().all(|x| !is_less(x, low)));
-            debug_assert!(mid[i..j].iter().all(|x| !is_less(high, x)));
-
-            // The last part contains elements > high. Elements after k have not been scanned 
-            // yet and are unordered.
-            debug_assert!(mid[j..k].iter().all(|x| is_less(high, x)));
-
-            let size = (n - k).min(BLOCK).try_into().unwrap_or(BLOCK as u8);
-        
-            // Scan BLOCK elements beginning at k. Then put each elem <= low to the middle part
-            // by swapping the element with an element in the range j..k. Since elements in j..k 
-            // are > high, this essentially moves the third part towards the end of the slice.
+            //                                       | block |
+            // ┌───────┬────────────────────┬────────┬─────────────┐
+            // │ < low │ low <= ... <= high │ > high │   ? .. ?    │
+            // └───────┴────────────────────┴────────┴─────────────┘
+            //          i                    j        k
+            //
+            // Scan the block of elements beginning at k. Then put each element x <= high to the
+            // middle part by swapping it with an element in the range j..k. Since elements in
+            // j..k are x > high, this creates a temporary part between the middle an third parts,
+            // where elements belong to either the first or the middle part. The third part towards
+            // the end of the slice.
             for offset in 0..size {
-                block[num_le_q].write(offset);
+                block[num_le_high].write(offset);
                 let elem = mid.get_unchecked(k + offset as usize);
-                num_le_q += !is_less(high, elem) as usize;
+                num_le_high += !is_less(high, elem) as usize;
             }
-            for (offset_j, offset_k) in block.iter().enumerate().take(num_le_q) {
+            for (offset_j, offset_k) in block.iter().enumerate().take(num_le_high) {
                 let offset_k = offset_k.assume_init() as usize;
                 mid.swap(j + offset_j, k + offset_k);
             }
-            
-            // Scan the elements moved to j..k in the previous step. If elem < low, swap it with 
-            // the element at i and increment i. Since the element at i is known to be >= low, the
-            // the it is kept in the middle. The first part grows by one element. 
-            for offset in 0..(num_le_q as u8) {
-                block[num_lt_p].write(offset);
+
+            // Scan the elements moved to the temporary part in the previous step. If x < low, swap
+            // the element with the first element of the middle part (the element at i) and
+            // increment i. Since the element at i is known to be x >= low, this moves
+            // the middle part to the right by one element. The first part grows by one
+            // element.
+            for offset in 0..(num_le_high as u8) {
+                block[num_lt_low].write(offset);
                 let elem = mid.get_unchecked(j + offset as usize);
-                num_lt_p += is_less(elem, low) as usize;
+                num_lt_low += is_less(elem, low) as usize;
             }
-            for offset_j in block.iter().take(num_lt_p) {
+            for offset_j in block.iter().take(num_lt_low) {
                 let offset_j = offset_j.assume_init() as usize;
                 mid.swap(i, j + offset_j);
                 i += 1;
             }
             k += size as usize;
-            j += num_le_q;
+            j += num_le_high;
 
             // Reset the counters
-            (num_lt_p, num_le_q) = (0, 0);
+            (num_lt_low, num_le_high) = (0, 0);
+
+            // The first part contains elements x < low.
+            debug_assert!(mid[..i].iter().all(|x| is_less(x, low)));
+
+            // The middle part contains elements low <= x <= high.
+            debug_assert!(mid[i..j].iter().all(|x| !is_less(x, low)));
+            debug_assert!(mid[i..j].iter().all(|x| !is_less(high, x)));
+
+            // The last part contains elements x > high. Elements after k have not been scanned
+            // yet and are unordered.
+            debug_assert!(mid[j..k].iter().all(|x| is_less(high, x)));
         }
     }
     let (u, v) = (i, j + 1);
@@ -980,64 +988,97 @@ fn ternary_block_partition_left<T: Ord>(
 
     (u, v)
 }
-
 fn ternary_block_partition_right<T: Ord>(
     data: &mut [T],
     u: usize,
     v: usize,
-    is_greater: impl Fn(&T, &T) -> bool,
+    is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
     sort_2(data, u, v);
     data.swap(0, u);
     data.swap(data.len() - 1, v);
-    let (p, tail) = data.split_first_mut().unwrap();
-    let (q, mid) = tail.split_last_mut().unwrap();
+    let (low, tail) = data.split_first_mut().unwrap();
+    let (high, mid) = tail.split_last_mut().unwrap();
     let n = mid.len();
-    let last = n - 1;
 
-    let (mut i, mut j, mut k) = (last, last, last);
-    let mut ge_p = 0;
-    let mut gt_q = 0;
+    let (mut i, mut j, mut k) = (n - 1, n - 1, n - 1);
+    let mut num_ge_low = 0;
+    let mut num_gt_high = 0;
     unsafe {
         let mut block: [MaybeUninit<u8>; BLOCK] = MaybeUninit::uninit().assume_init();
-        while i > 0 {
-            // data[..i] < p <= data[i..j] <= q < data[j..k] 
-            let t = i.min(BLOCK).try_into().unwrap_or(BLOCK as u8);
+        while k > 0 {
+            let size = (k + 1).min(BLOCK) as u8;
 
-            // Scan elements before i. If elem >= p, place it between j and k.
-            for o in 0..t {
-                let elem = mid.get_unchecked(i - o as usize);
-                block[ge_p].write(o);
-                ge_p += !is_greater(p, elem) as usize;
+            //     | block |
+            // ┌───────────┬───────┬────────────────────┬────────┐
+            // │  ? .. ?   │ low < │ low <= ... <= high │ > high │
+            // └───────────┴───────┴────────────────────┴────────┘
+            //            k k+1   i i+1                j j+1
+            //
+            // Scan the block of elements ending at k. Then put each element x >= low to a temporary
+            // part between the first and middle parts by swapping the element with an
+            // element in the range k..i. This moves the first part towards the
+            // beginning of the slice.
+            for offset in 0..size {
+                block[num_ge_low].write(offset);
+                let elem = mid.get_unchecked(k - offset as usize);
+                num_ge_low += !is_less(elem, low) as usize;
             }
-            for (c, u) in block.iter().enumerate().take(ge_p) {
-                let b = u.assume_init() as usize;
-                mid.swap(j - c, i - b);
+            for (offset_i, offset_k) in block.iter().enumerate().take(num_ge_low) {
+                let offset_k = offset_k.assume_init() as usize;
+                mid.swap(i - offset_i, k - offset_k);
             }
-            i -= t as usize;
 
-            // Scan the moved elements. If elem > q, move it to the right of k.
-            for o in 0..(ge_p as u8) {
-                let elem = mid.get_unchecked(j - o as usize);
-                block[gt_q].write(o);
-                gt_q += is_greater(elem, q) as usize;
+            // Scan the elements moved to k..i in the previous step. If element is x > high, swap it
+            // with the element before j and decrement j. The third part grows by one
+            // element.
+            for offset in 0..(num_ge_low as u8) {
+                block[num_gt_high].write(offset);
+                let elem = mid.get_unchecked(i - offset as usize);
+                num_gt_high += is_less(high, elem) as usize;
             }
-            for u in block.iter().take(gt_q) {
-                let b = u.assume_init() as usize;
-                mid.swap(k, j - b);
-                k -= 1;
+            for offset_i in block.iter().take(num_gt_high) {
+                let offset_i = offset_i.assume_init() as usize;
+                mid.swap(j, i - offset_i);
+                j = j.wrapping_sub(1);
             }
-            j -= ge_p;
-            (ge_p, gt_q) = (0, 0);
+            k = k.saturating_sub(size as usize);
+            i = i.wrapping_sub(num_ge_low);
+
+            // Reset the counters
+            (num_gt_high, num_ge_low) = (0, 0);
+
+            // The first part contains elements x < low. The elements in the range ..k have not been
+            // scanned yet and are unordered.
+            debug_assert!(if i < n {
+                mid[k + 1..=i].iter().all(|x| is_less(x, low))
+            } else {
+                true
+            });
+
+            // The middle part contains elements low <= x <= high.
+            debug_assert!(if j < n - 1 {
+                let ge_low = mid[i.wrapping_add(1)..=j].iter().all(|x| !is_less(x, low));
+                let le_high = mid[i.wrapping_add(1)..=j].iter().all(|x| !is_less(high, x));
+                ge_low && le_high
+            } else {
+                true
+            });
+
+            // The last part contains elements x > high.
+            debug_assert!(if j.wrapping_add(1) < n {
+                mid[j.wrapping_add(1)..].iter().all(|x| is_less(high, x))
+            } else {
+                true
+            });
         }
     }
-    let (u, v) = (last - i, last - j - 1);
+    let (u, v) = (i.wrapping_add(1), j.wrapping_add(2));
     data.swap(u, 0);
     data.swap(v, data.len() - 1);
 
     (u, v)
 }
-
 /// A cache of pointers to elements that satisfy a predicate.
 struct PtrCache<T, F>
 where
