@@ -7,7 +7,7 @@
 mod dbg;
 mod pcg_rng;
 mod slice_sort;
-use core::{mem::MaybeUninit, ptr};
+use core::{mem::MaybeUninit, ptr, slice};
 use pcg_rng::PCGRng;
 
 #[cfg(test)]
@@ -328,7 +328,7 @@ where
     F: Fn(&T, &T) -> bool + Copy,
 {
     let (mut d, mut i) = (data, index);
-    let mut offset = 0;
+    let (mut offset, mut delta) = (0, usize::MAX);
     let (u, v) = loop {
         if i == 0 {
             break partition_at_first(d, is_less);
@@ -337,8 +337,11 @@ where
         } else if d.len() < CUT {
             break select_nth_small(d, i, is_less, rng);
         } else {
+            let len = d.len();
             let (p, q) = prepare_partition(d, i, is_less, rng);
-            let (u, v) = if i < d.len() / 2 {
+            let (u, v) = if delta == 0 {
+                partition_single_index(d, p, is_less)
+            } else if i < d.len() / 2 {
                 partition_dual_index_high(d, p, q, is_less)
             } else {
                 partition_dual_index_low(d, p, q, is_less)
@@ -348,9 +351,17 @@ where
                     d = &mut d[..u];
                 }
                 (u, v) if i <= v => {
-                    d = &mut d[u..=v];
-                    offset += u;
-                    i -= u;
+                    if d[u] == d[v] {
+                        break (u, v);
+                    } else if i == u {
+                        break (u, u);
+                    } else if i == v {
+                        break (v, v);
+                    } else {
+                        d = &mut d[u..=v];
+                        i -= u;
+                        offset += u;
+                    }
                 }
                 (_u, v) => {
                     d = &mut d[v + 1..];
@@ -358,6 +369,7 @@ where
                     i -= v + 1;
                 }
             }
+            delta = len - d.len();
         }
     };
     (u + offset, v + offset)
@@ -483,8 +495,8 @@ fn partition_single_index<T: Ord>(
     debug_assert!(!data.is_empty());
     data.swap(0, p);
     let (head, tail) = data.split_at_mut(1);
-    let pivot = &head[0];
-    let (u, v) = partition_high(tail, pivot, pivot, is_less);
+    let pivot = &mut head[0];
+    let (u, v) = partition_single(tail, pivot, is_less);
     data.swap(0, u);
     (u, v)
 }
@@ -512,7 +524,7 @@ fn partition_dual_index_low<T: Ord>(
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
     let (low, mid, high) = read_pivots(data, p, q);
-    let (u, v) = partition_low(mid, low, high, is_less);
+    let (u, v) = partition_dual_low(mid, low, high, is_less);
     data.swap(0, u);
     data.swap(v + 1, data.len() - 1);
     (u, v + 1)
@@ -538,10 +550,82 @@ fn partition_dual_index_high<T: Ord>(
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
     let (low, mid, high) = read_pivots(data, p, q);
-    let (u, v) = partition_high(mid, low, high, is_less);
+    let (u, v) = partition_dual_high(mid, low, high, is_less);
     data.swap(0, u);
     data.swap(v + 1, data.len() - 1);
     (u, v + 1)
+}
+
+fn partition_single<T: Ord>(
+    data: &mut [T],
+    pivot: &mut T,
+    is_less: impl Fn(&T, &T) -> bool,
+) -> (usize, usize) {
+    let n = data.len();
+    let (mut i, mut j, mut k) = (0, 0, 0);
+    let mut num_lt = 0;
+    let mut num_le = 0;
+    unsafe {
+        let pivot = Hole::new(slice::from_mut(pivot), 0);
+        let mut block: Block = MaybeUninit::uninit().assume_init();
+        while k < n {
+            let size = (n - k).min(BLOCK) as u8;
+
+            //                                | block |
+            // ┌─────────┬──────────┬─────────┬─────────────┐
+            // │ < pivot │ == pivot │ > pivot │   ? .. ?    │
+            // └─────────┴──────────┴─────────┴─────────────┘
+            //          i            j         k
+            //
+            // Scan the block of elements beginning at k. Then put each element x <= pivot to the
+            // middle part by swapping it with an element in the range j..k. Since elements in
+            // j..k are x > pivot, this creates a temporary part between the middle an third parts,
+            // where elements belong to either the first or the middle part. The third part towards
+            // the end of the slice.
+            for offset in 0..size {
+                block[num_le].write(offset);
+                let elem = data.get_unchecked(k + offset as usize);
+                num_le += !is_less(pivot.element(), elem) as usize;
+            }
+            for (offset_j, offset_k) in block.iter().enumerate().take(num_le) {
+                let offset_k = offset_k.assume_init() as usize;
+                data.swap(j + offset_j, k + offset_k);
+            }
+
+            // Scan the elements moved to the temporary part in the previous step. If x < pivot,
+            // swap the element with the first element of the middle part (the element
+            // at i) and increment i. Since the element at i is known to be x >= pivot,
+            // this moves the middle part to the right by one element. The first part
+            // grows by one element.
+            for offset in 0..(num_le as u8) {
+                block[num_lt].write(offset);
+                let elem = data.get_unchecked(j + offset as usize);
+                num_lt += is_less(elem, pivot.element()) as usize;
+            }
+            for offset_j in block.iter().take(num_lt) {
+                let offset_j = offset_j.assume_init() as usize;
+                data.swap(i, j + offset_j);
+                i += 1;
+            }
+            k += size as usize;
+            j += num_le;
+
+            // Reset the counters
+            (num_lt, num_le) = (0, 0);
+
+            // The first part contains elements x < pivot.
+            // debug_assert!(data[..i].iter().all(|x| is_less(x, pivot.element())));
+
+            // The middle part contains elements x == pivot.
+            // debug_assert!(data[i..j].iter().all(|x| !is_less(x, pivot.element())));
+            // debug_assert!(data[i..j].iter().all(|x| !is_less(pivot.element(), x)));
+
+            // The last part contains elements x > pivot. Elements after k have not been scanned
+            // yet and are unordered.
+            // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
+        }
+    }
+    (i, j)
 }
 
 /// Partitions the slice into three parts, using `low` and `high` as pivots. Returns the indices
@@ -560,19 +644,33 @@ fn partition_dual_index_high<T: Ord>(
 /// is faster than the `partition_high` variant.
 ///
 /// Panics if the indices are out of bounds or if `low > high`.
-fn partition_low<T: Ord>(
+fn partition_dual_low<T: Ord>(
     data: &mut [T],
-    low: &T,
-    high: &T,
+    low: &mut T,
+    high: &mut T,
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
     assert!(low <= high);
-    let n = data.len();
-    let (mut i, mut j, mut k) = (n, n, n);
-    let mut num_ge_low = 0;
-    let mut num_gt_high = 0;
     unsafe {
+        let (mut l, mut r) = (0, data.len() - 1);
+        while l < r && is_less(high, data.get_unchecked(r)) {
+            r -= 1;
+        }
+        while l < r && is_less(data.get_unchecked(l), low) {
+            l += 1;
+        }
+
+        let data = &mut data[l..=r];
+        let n = data.len();
+        let (mut i, mut j, mut k) = (n, n, n);
+
+        let low = Hole::new(slice::from_mut(low), 0);
+        let high = Hole::new(slice::from_mut(high), 0);
         let mut block: Block = MaybeUninit::uninit().assume_init();
+        let (mut off_i, mut off_k);
+        let mut num_gt_high: u8 = 0;
+        let mut num_ge_low: u8 = 0;
+
         while k > 0 {
             let size = k.min(BLOCK) as u8;
             //     | block |
@@ -585,31 +683,39 @@ fn partition_low<T: Ord>(
             // part between the first and middle parts by swapping the element with an
             // element in the range k..i. This moves the first part towards the
             // beginning of the slice.
-            for offset in 1..=size {
-                block[num_ge_low].write(offset);
-                let elem = data.get_unchecked(k - offset as usize);
-                num_ge_low += !is_less(elem, low) as usize;
+            off_i = 1;
+            while off_i <= size {
+                block[num_ge_low as usize].write(off_i);
+                let elem = data.get_unchecked(k - off_i as usize);
+                num_ge_low += !is_less(elem, low.element()) as u8;
+                off_i += 1;
             }
-            for (offset_i, offset_k) in block.iter().enumerate().take(num_ge_low) {
-                let offset_k = offset_k.assume_init() as usize;
-                data.swap(i - 1 - offset_i, k - offset_k);
+            off_i = 0;
+            while off_i < num_ge_low {
+                off_k = block.get_unchecked(off_i as usize).assume_init();
+                data.swap(i - 1 - off_i as usize, k - off_k as usize);
+                off_i += 1;
             }
 
             // Scan the elements moved to k..i in the previous step. If element is x > high, swap it
             // with the element before j and decrement j. The third part grows by one
             // element.
-            for offset in 1..=(num_ge_low as u8) {
-                block[num_gt_high].write(offset);
-                let elem = data.get_unchecked(i - offset as usize);
-                num_gt_high += is_less(high, elem) as usize;
+            off_i = 1;
+            while off_i <= num_ge_low {
+                block[num_gt_high as usize].write(off_i);
+                let elem = data.get_unchecked(i - off_i as usize);
+                num_gt_high += is_less(high.element(), elem) as u8;
+                off_i += 1;
             }
-            for offset_i in block.iter().take(num_gt_high) {
-                let offset_i = offset_i.assume_init() as usize;
+            off_k = 0;
+            while off_k < num_gt_high {
+                off_i = block.get_unchecked(off_k as usize).assume_init();
                 j -= 1;
-                data.swap(j, i - offset_i);
+                data.swap(j, i - off_i as usize);
+                off_k += 1;
             }
             k -= size as usize;
-            i -= num_ge_low;
+            i -= num_ge_low as usize;
 
             // Reset the counters
             (num_gt_high, num_ge_low) = (0, 0);
@@ -637,8 +743,8 @@ fn partition_low<T: Ord>(
             //     true
             // });
         }
+        (l + i, l + j)
     }
-    (i, j)
 }
 
 /// Partitions the slice into three parts, using the `low` and `high` as pivots. Returns the indices
@@ -657,19 +763,35 @@ fn partition_low<T: Ord>(
 /// the higher pivot, this is faster than the `partition_low` variant.
 ///
 /// Panics if the indices are out of bounds or if `low > high`.
-fn partition_high<T: Ord>(
+fn partition_dual_high<T: Ord>(
     data: &mut [T],
-    low: &T,
-    high: &T,
+    low: &mut T,
+    high: &mut T,
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
     assert!(low <= high);
-    let n = data.len();
-    let (mut i, mut j, mut k) = (0, 0, 0);
-    let mut num_lt_low = 0;
-    let mut num_le_high = 0;
+
     unsafe {
+        let (mut l, mut r) = (0, data.len() - 1);
+        let (mut i, mut j, mut k) = (0, 0, 0);
+        while l < r && is_less(high, data.get_unchecked(r)) {
+            r -= 1;
+        }
+        while l < r && is_less(data.get_unchecked(l), low) {
+            l += 1;
+        }
+
+        let data = &mut data[l..=r];
+        let n = data.len();
+
+        let low = Hole::new(slice::from_mut(low), 0);
+        let high = Hole::new(slice::from_mut(high), 0);
+
         let mut block: Block = MaybeUninit::uninit().assume_init();
+        let (mut off_j, mut off_k);
+        let mut num_lt_low = 0;
+        let mut num_le_high = 0;
+
         while k < n {
             let size = (n - k).min(BLOCK) as u8;
 
@@ -684,14 +806,18 @@ fn partition_high<T: Ord>(
             // j..k are x > high, this creates a temporary part between the middle an third parts,
             // where elements belong to either the first or the middle part. The third part towards
             // the end of the slice.
-            for offset in 0..size {
-                block[num_le_high].write(offset);
-                let elem = data.get_unchecked(k + offset as usize);
-                num_le_high += !is_less(high, elem) as usize;
+            off_k = 0;
+            while off_k < size {
+                block[num_le_high as usize].write(off_k);
+                let elem = data.get_unchecked(k + off_k as usize);
+                num_le_high += !is_less(high.element(), elem) as u8;
+                off_k += 1;
             }
-            for (offset_j, offset_k) in block.iter().enumerate().take(num_le_high) {
-                let offset_k = offset_k.assume_init() as usize;
-                data.swap(j + offset_j, k + offset_k);
+            off_j = 0;
+            while off_j < num_le_high {
+                off_k = block.get_unchecked(off_j as usize).assume_init();
+                data.swap(j + off_j as usize, k + off_k as usize);
+                off_j += 1;
             }
 
             // Scan the elements moved to the temporary part in the previous step. If x < low, swap
@@ -699,33 +825,37 @@ fn partition_high<T: Ord>(
             // increment i. Since the element at i is known to be x >= low, this moves
             // the middle part to the right by one element. The first part grows by one
             // element.
-            for offset in 0..(num_le_high as u8) {
-                block[num_lt_low].write(offset);
-                let elem = data.get_unchecked(j + offset as usize);
-                num_lt_low += is_less(elem, low) as usize;
+            off_j = 0;
+            while off_j < num_le_high {
+                block[num_lt_low as usize].write(off_j);
+                let elem = data.get_unchecked(j + off_j as usize);
+                num_lt_low += is_less(elem, low.element()) as u8;
+                off_j += 1;
             }
-            for offset_j in block.iter().take(num_lt_low) {
-                let offset_j = offset_j.assume_init() as usize;
-                data.swap(i, j + offset_j);
+            off_j = 0;
+            while off_j < num_lt_low {
+                let off = block.get_unchecked(off_j as usize).assume_init();
+                data.swap(i, j + off as usize);
+                off_j += 1;
                 i += 1;
             }
             k += size as usize;
-            j += num_le_high;
+            j += num_le_high as usize;
 
             // Reset the counters
             (num_lt_low, num_le_high) = (0, 0);
 
             // The first part contains elements x < low.
-            // debug_assert!(data[..i].iter().all(|x| is_less(x, low)));
+            // debug_assert!(data[..i].iter().all(|x| is_less(x, low.element())));
 
             // The middle part contains elements low <= x <= high.
-            // debug_assert!(data[i..j].iter().all(|x| !is_less(x, low)));
-            // debug_assert!(data[i..j].iter().all(|x| !is_less(high, x)));
+            // debug_assert!(data[i..j].iter().all(|x| !is_less(x, low.element())));
+            // debug_assert!(data[i..j].iter().all(|x| !is_less(high.element(), x)));
 
             // The last part contains elements x > high. Elements after k have not been scanned
             // yet and are unordered.
-            // debug_assert!(data[j..k].iter().all(|x| is_less(high, x)));
+            // debug_assert!(data[j..k].iter().all(|x| is_less(high.element(), x)));
         }
+        (l + i, l + j)
     }
-    (i, j)
 }

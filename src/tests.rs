@@ -1,5 +1,5 @@
 use crate::{
-    median_5, partition_dual_index_high, partition_dual_index_low, partition_high, partition_low,
+    median_5, partition_dual_index_high, partition_dual_index_low, partition_dual_high, partition_dual_low,
     partition_single_index, pcg_rng::PCGRng, select_floyd_rivest, select_nth_small, sort_3, sort_4, select_nth_unstable,
 };
 
@@ -36,7 +36,7 @@ fn lomuto_single_index() {
 }
 
 #[test]
-fn lomuto_indexed_left() {
+fn lomuto_indexed_low() {
     let repeat = 1000;
     let count = 300;
     let mut rng = PCGRng::new(0);
@@ -59,7 +59,7 @@ fn lomuto_indexed_left() {
 }
 
 #[test]
-fn lomuto_indexed_right() {
+fn lomuto_indexed_high() {
     let repeat = 1000;
     let count = 300;
     let mut rng = PCGRng::new(0);
@@ -82,7 +82,7 @@ fn lomuto_indexed_right() {
 }
 
 #[test]
-fn lomuto_pivots_left() {
+fn lomuto_dual_low() {
     let repeat = 1000;
     let count = 300;
     let mut rng = PCGRng::new(0);
@@ -90,10 +90,10 @@ fn lomuto_pivots_left() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
 
-        let low = rng.bounded_usize(0, count);
-        let high = rng.bounded_usize(low, count);
+        let mut low = rng.bounded_usize(0, count);
+        let mut high = rng.bounded_usize(low, count);
 
-        let (u, v) = partition_low(&mut data, &low, &high, usize::lt);
+        let (u, v) = partition_dual_low(&mut data, &mut low, &mut high, usize::lt);
         assert!(data[..u].iter().all(|elem| elem < &low));
         assert!(data[u..v].iter().all(|elem| elem >= &low));
         assert!(data[u..v].iter().all(|elem| elem <= &high));
@@ -102,7 +102,7 @@ fn lomuto_pivots_left() {
 }
 
 #[test]
-fn lomuto_pivots_right() {
+fn lomuto_dual_high() {
     let repeat = 1000;
     let count = 300;
     let mut rng = PCGRng::new(0);
@@ -110,10 +110,10 @@ fn lomuto_pivots_right() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
 
-        let low = rng.bounded_usize(0, count);
-        let high = rng.bounded_usize(low, count);
+        let mut low = rng.bounded_usize(0, count);
+        let mut high = rng.bounded_usize(low, count);
 
-        let (u, v) = partition_high(&mut data, &low, &high, usize::lt);
+        let (u, v) = partition_dual_high(&mut data, &mut low, &mut high, usize::lt);
         assert!(data[..u].iter().all(|elem| elem < &low));
         assert!(data[u..v].iter().all(|elem| elem >= &low));
         assert!(data[u..v].iter().all(|elem| elem <= &high));
@@ -157,7 +157,7 @@ fn large_median() {
 fn nth() {
     let repeat = 1000;
     let max = 10000;
-    let mut pcg = PCGRng::new(0);
+    let mut pcg = PCGRng::new(5);
 
     for _iter in 0..repeat {
         let count = pcg.bounded_usize(1, max);
