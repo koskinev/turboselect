@@ -513,8 +513,9 @@ fn partition_single_index<T: Ord>(
 ///            u                 v
 /// ```
 ///
-/// This variant compares elements to the lower pivot first, making it more efficient when most
-/// elements are
+/// This variant of the algorithm tests the elements first against the lower pivot and conditionally
+/// against the higher pivot. If most elements are expected to be less than the lower pivot, this
+/// is faster than the high variant.
 ///
 /// Panics if the slice has less than two elements, if `p` or `q` are out of bounds or if `p == q`.
 fn partition_dual_index_low<T: Ord>(
@@ -541,7 +542,10 @@ fn partition_dual_index_low<T: Ord>(
 /// └─────────┴───────────────────┴─────────┘
 ///            u                 v
 /// ```
-///
+/// This variant of the algorithm tests the elements first against the higher pivot and
+/// conditionally against the lower pivot. If most elements are expected to be greater than
+/// the higher pivot, this is faster than the low variant.
+/// 
 /// Panics if the slice has less than two elements, if `p` or `q` are out of bounds or if `p == q`.
 fn partition_dual_index_high<T: Ord>(
     data: &mut [T],
@@ -561,13 +565,26 @@ fn partition_single<T: Ord>(
     pivot: &mut T,
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
-    let n = data.len();
-    let (mut i, mut j, mut k) = (0, 0, 0);
-    let mut num_lt = 0;
-    let mut num_le = 0;
     unsafe {
+        let (mut l, mut r) = (0, data.len() - 1);
+        while l < r && is_less(pivot, data.get_unchecked(r)) {
+            r -= 1;
+        }
+        while l < r && is_less(data.get_unchecked(l), pivot) {
+            l += 1;
+        }
+
+        let data = &mut data[l..=r];
+        let origin = data.as_mut_ptr();
+        let n = data.len();
+        let (mut i, mut j, mut k) = (0, 0, 0);
+
         let pivot = Hole::new(slice::from_mut(pivot), 0);
         let mut block: Block = MaybeUninit::uninit().assume_init();
+        let (mut off_j, mut off_k);
+        let mut num_lt: u8 = 0;
+        let mut num_le: u8 = 0;
+
         while k < n {
             let size = (n - k).min(BLOCK) as u8;
 
@@ -582,14 +599,21 @@ fn partition_single<T: Ord>(
             // j..k are x > pivot, this creates a temporary part between the middle an third parts,
             // where elements belong to either the first or the middle part. The third part towards
             // the end of the slice.
-            for offset in 0..size {
-                block[num_le].write(offset);
-                let elem = data.get_unchecked(k + offset as usize);
-                num_le += !is_less(pivot.element(), elem) as usize;
+            off_k = 0;
+            while off_k < size {
+                block[num_le as usize].write(off_k);
+                let elem = data.get_unchecked(k + off_k as usize);
+                num_le += !is_less(pivot.element(), elem) as u8;
+                off_k += 1;
             }
-            for (offset_j, offset_k) in block.iter().enumerate().take(num_le) {
-                let offset_k = offset_k.assume_init() as usize;
-                data.swap(j + offset_j, k + offset_k);
+            off_j = 0;
+            while off_j < num_le {
+                off_k = block.get_unchecked(off_j as usize).assume_init();
+                // data.swap(j + offset_j, k + offset_k);
+                origin
+                    .add(j + off_j as usize)
+                    .swap(origin.add(k + off_k as usize));
+                off_j += 1;
             }
 
             // Scan the elements moved to the temporary part in the previous step. If x < pivot,
@@ -597,18 +621,23 @@ fn partition_single<T: Ord>(
             // at i) and increment i. Since the element at i is known to be x >= pivot,
             // this moves the middle part to the right by one element. The first part
             // grows by one element.
-            for offset in 0..(num_le as u8) {
-                block[num_lt].write(offset);
-                let elem = data.get_unchecked(j + offset as usize);
-                num_lt += is_less(elem, pivot.element()) as usize;
+            off_j = 0;
+            while off_j < num_le {
+                block[num_lt as usize].write(off_j);
+                let elem = data.get_unchecked(j + off_j as usize);
+                num_lt += is_less(elem, pivot.element()) as u8;
+                off_j += 1;
             }
-            for offset_j in block.iter().take(num_lt) {
-                let offset_j = offset_j.assume_init() as usize;
-                data.swap(i, j + offset_j);
+            off_k = 0;
+            while off_k < num_lt {
+                off_j = block.get_unchecked(off_k as usize).assume_init();
+                // data.swap(i, j + offset_j);
+                origin.add(i).swap(origin.add(j + off_j as usize));
+                off_k += 1;
                 i += 1;
             }
             k += size as usize;
-            j += num_le;
+            j += num_le as usize;
 
             // Reset the counters
             (num_lt, num_le) = (0, 0);
@@ -624,8 +653,8 @@ fn partition_single<T: Ord>(
             // yet and are unordered.
             // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
         }
+        (l + i, l + j)
     }
-    (i, j)
 }
 
 /// Partitions the slice into three parts, using `low` and `high` as pivots. Returns the indices
@@ -641,7 +670,7 @@ fn partition_single<T: Ord>(
 ///
 /// This variant of the algorithm tests the elements first against the lower pivot and conditionally
 /// against the higher pivot. If most elements are expected to be less than the lower pivot, this
-/// is faster than the `partition_high` variant.
+/// is faster than the high variant.
 ///
 /// Panics if the indices are out of bounds or if `low > high`.
 fn partition_dual_low<T: Ord>(
@@ -661,6 +690,7 @@ fn partition_dual_low<T: Ord>(
         }
 
         let data = &mut data[l..=r];
+        let origin = data.as_mut_ptr();
         let n = data.len();
         let (mut i, mut j, mut k) = (n, n, n);
 
@@ -683,17 +713,20 @@ fn partition_dual_low<T: Ord>(
             // part between the first and middle parts by swapping the element with an
             // element in the range k..i. This moves the first part towards the
             // beginning of the slice.
-            off_i = 1;
-            while off_i <= size {
-                block[num_ge_low as usize].write(off_i);
-                let elem = data.get_unchecked(k - off_i as usize);
+            off_k = 1;
+            while off_k <= size {
+                block[num_ge_low as usize].write(off_k);
+                let elem = data.get_unchecked(k - off_k as usize);
                 num_ge_low += !is_less(elem, low.element()) as u8;
-                off_i += 1;
+                off_k += 1;
             }
             off_i = 0;
             while off_i < num_ge_low {
                 off_k = block.get_unchecked(off_i as usize).assume_init();
-                data.swap(i - 1 - off_i as usize, k - off_k as usize);
+                // data.swap(i - 1 - off_i as usize, k - off_k as usize);
+                origin
+                    .add(i - 1 - off_i as usize)
+                    .swap(origin.add(k - off_k as usize));
                 off_i += 1;
             }
 
@@ -711,7 +744,8 @@ fn partition_dual_low<T: Ord>(
             while off_k < num_gt_high {
                 off_i = block.get_unchecked(off_k as usize).assume_init();
                 j -= 1;
-                data.swap(j, i - off_i as usize);
+                // data.swap(j, i - off_i as usize);
+                origin.add(j).swap(origin.add(i - off_i as usize));
                 off_k += 1;
             }
             k -= size as usize;
@@ -760,7 +794,7 @@ fn partition_dual_low<T: Ord>(
 ///
 /// This variant of the algorithm tests the elements first against the higher pivot and
 /// conditionally against the lower pivot. If most elements are expected to be greater than
-/// the higher pivot, this is faster than the `partition_low` variant.
+/// the higher pivot, this is faster than the low variant.
 ///
 /// Panics if the indices are out of bounds or if `low > high`.
 fn partition_dual_high<T: Ord>(
@@ -773,7 +807,6 @@ fn partition_dual_high<T: Ord>(
 
     unsafe {
         let (mut l, mut r) = (0, data.len() - 1);
-        let (mut i, mut j, mut k) = (0, 0, 0);
         while l < r && is_less(high, data.get_unchecked(r)) {
             r -= 1;
         }
@@ -782,7 +815,9 @@ fn partition_dual_high<T: Ord>(
         }
 
         let data = &mut data[l..=r];
+        let origin = data.as_mut_ptr();
         let n = data.len();
+        let (mut i, mut j, mut k) = (0, 0, 0);
 
         let low = Hole::new(slice::from_mut(low), 0);
         let high = Hole::new(slice::from_mut(high), 0);
@@ -816,7 +851,10 @@ fn partition_dual_high<T: Ord>(
             off_j = 0;
             while off_j < num_le_high {
                 off_k = block.get_unchecked(off_j as usize).assume_init();
-                data.swap(j + off_j as usize, k + off_k as usize);
+                // data.swap(j + off_j as usize, k + off_k as usize);
+                origin
+                    .add(j + off_j as usize)
+                    .swap(origin.add(k + off_k as usize));
                 off_j += 1;
             }
 
@@ -832,11 +870,12 @@ fn partition_dual_high<T: Ord>(
                 num_lt_low += is_less(elem, low.element()) as u8;
                 off_j += 1;
             }
-            off_j = 0;
-            while off_j < num_lt_low {
-                let off = block.get_unchecked(off_j as usize).assume_init();
-                data.swap(i, j + off as usize);
-                off_j += 1;
+            off_k = 0;
+            while off_k < num_lt_low {
+                off_j = block.get_unchecked(off_k as usize).assume_init();
+                // data.swap(i, j + off as usize);
+                origin.add(i).swap(origin.add(j + off_j as usize));
+                off_k += 1;
                 i += 1;
             }
             k += size as usize;
