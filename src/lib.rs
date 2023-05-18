@@ -18,7 +18,7 @@ mod tests;
 
 const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
-const BLOCK: usize = 4;
+const BLOCK: usize = 128;
 const CUT: usize = 1000;
 
 /// A block of potentially uninitialized bytes, used in the block partitioning methods.
@@ -167,9 +167,14 @@ fn partition_at_last<T: Ord>(data: &mut [T], is_less: impl Fn(&T, &T) -> bool) -
     (u, v)
 }
 
-fn pivot_gap(s: usize, n: usize) -> usize {
+fn pivot_positions(index: usize, n: usize) -> (usize, usize) {
+    let index = index as f64;
+    let size = sample_size(n) as f64;
     let n = n as f64;
-    (BETA * (s as f64) * n.ln()).powf(0.5) as usize
+    let gap = (BETA * size * n.ln()).powf(0.5);
+    let p = (index * size / n - gap).ceil().max(0.) as usize;
+    let q = (index * size / n + gap).ceil().min(size - 1.) as usize;
+    (p, q)
 }
 
 fn prepare_partition<T: Ord, F>(
@@ -186,25 +191,30 @@ where
     let count = sample_size(len);
     let sample = sample(data, count, rng);
 
-    // Select the pivot indices
-    let g = pivot_gap(count, len);
-    let u = (((index + 1) * count) / len).saturating_sub(g);
-    let v = (((index + 1) * count) / len + g).min(count - 1);
+    // Select the pivot positions
+    let (p, q) = pivot_positions(index, len);
 
-    let (v_a, v_d) = select_floyd_rivest(sample, v, is_less, rng);
-    if u < v_a {
-        let (_, u_d) = select_floyd_rivest(&mut sample[..v_a], u, is_less, rng);
+    // Find the pivots
+    let (q_low, q_high) = select_floyd_rivest(sample, q, is_less, rng);
 
-        // Move sample elements greater than the higher pivot to the end of the slice
-        unordered_swap(data, v_d + 1, len - 1, count - v_d - 1);
-
-        // Move sample elements equal to the higher pivot before the elements just
-        // moved to the end of the slice
-        unordered_swap(data, v_a, len - count + v_d, v_d - v_a + 1);
-        (u_d, len - count + v_a)
+    let (p_high, q_low) = if p < q_low {
+        // The low pivot must be less than the high pivot
+        let (_, p_high) = select_floyd_rivest(&mut sample[..q_low], p, is_less, rng);
+        (p_high, q_low)
     } else {
-        (v_a, v_d)
-    }
+        // The low pivot is equal to the high pivot
+        (q_low, q_low + 1)
+    };
+
+    // Move sample elements >= high pivot to the end of the slice
+    unordered_swap(data, q_high + 1, len - 1, count - q_high - 1);
+
+    // Move sample elements == high pivot before the elements just moved to the end of the slice
+    unordered_swap(data, q_low, len - count + q_high, q_high - q_low + 1);
+
+    // Return the position of the last element equal to the low pivot and the position of the
+    // first element equal to the high pivot
+    (p_high, len - count + q_low)
 }
 
 /// Rotates the elements at `a`, `b`, and `c` in the slice `data` such that the element at `a` is
@@ -218,22 +228,6 @@ unsafe fn rotate_3<T>(data: &mut [T], a: usize, b: usize, c: usize) {
     b.write(ptr::read(a));
     a.write(ptr::read(c));
     c.write(ManuallyDrop::into_inner(tmp));
-}
-
-fn sample_size(n: usize) -> usize {
-    let n = n as f64;
-    let f = n.powf(2. / 3.) * n.ln().powf(1. / 3.);
-    (ALPHA * f).ceil().min(n - 1.) as usize
-}
-
-pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
-    let mut rng = PCGRng::new(0);
-    if data.len() < CUT {
-        select_nth_small(data, index, T::lt, &mut rng);
-    } else {
-        select_floyd_rivest(data, index, T::lt, &mut rng);
-    }
-    &data[index]
 }
 
 /// Takes a `count` element random sample from the slice, placing it into the beginning of the
@@ -250,6 +244,22 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [
         }
     }
     &mut data[..count]
+}
+
+fn sample_size(n: usize) -> usize {
+    let n = n as f64;
+    let f = n.powf(2. / 3.) * n.ln().powf(1. / 3.);
+    (ALPHA * f).ceil().min(n - 1.) as usize
+}
+
+pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
+    let mut rng = PCGRng::new(0);
+    if data.len() < CUT {
+        select_nth_small(data, index, T::lt, &mut rng);
+    } else {
+        select_floyd_rivest(data, index, T::lt, &mut rng);
+    }
+    &data[index]
 }
 
 fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
@@ -358,49 +368,51 @@ fn select_floyd_rivest<T: Ord, F>(
 where
     F: Fn(&T, &T) -> bool + Copy,
 {
-    let (mut d, mut i) = (data, index);
+    let (mut inner, mut inner_index) = (data, index);
     let (mut offset, mut delta) = (0, usize::MAX);
     let (u, v) = loop {
-        if i == 0 {
-            break partition_at_first(d, is_less);
-        } else if i == d.len() - 1 {
-            break partition_at_last(d, is_less);
-        } else if d.len() < CUT {
-            break select_nth_small(d, i, is_less, rng);
+        if inner_index == 0 {
+            break partition_at_first(inner, is_less);
+        } else if inner_index == inner.len() - 1 {
+            break partition_at_last(inner, is_less);
+        } else if inner.len() < CUT {
+            break select_nth_small(inner, inner_index, is_less, rng);
         } else {
-            let len = d.len();
-            let (p, q) = prepare_partition(d, i, is_less, rng);
+            let len = inner.len();
+            let (p, q) = prepare_partition(inner, inner_index, is_less, rng);
+            let sub = &mut inner[p..=q];
+            let q = q - p;
             let (u, v) = if delta == 0 {
-                partition_single_index(d, p, is_less)
-            } else if i < d.len() / 2 {
-                partition_dual_index_high(d, p, q, is_less)
+                partition_single_index(sub, 0, is_less)
+            } else if inner_index < len / 2 {
+                partition_dual_index_high(sub, 0, q, is_less)
             } else {
-                partition_dual_index_low(d, p, q, is_less)
+                partition_dual_index_low(sub, 0, q, is_less)
             };
-            match (u, v) {
-                (u, _v) if i < u => {
-                    d = &mut d[..u];
+            match (p + u, p + v) {
+                (u, _v) if inner_index < u => {
+                    inner = &mut inner[..u];
                 }
-                (u, v) if i <= v => {
-                    if d[u] == d[v] {
+                (u, v) if inner_index <= v => {
+                    if inner[u] == inner[v] {
                         break (u, v);
-                    } else if i == u {
+                    } else if inner_index == u {
                         break (u, u);
-                    } else if i == v {
+                    } else if inner_index == v {
                         break (v, v);
                     } else {
-                        d = &mut d[u..=v];
-                        i -= u;
+                        inner = &mut inner[u..=v];
+                        inner_index -= u;
                         offset += u;
                     }
                 }
                 (_u, v) => {
-                    d = &mut d[v + 1..];
+                    inner = &mut inner[v + 1..];
                     offset += v + 1;
-                    i -= v + 1;
+                    inner_index -= v + 1;
                 }
             }
-            delta = len - d.len();
+            delta = len - inner.len();
         }
     };
     (u + offset, v + offset)

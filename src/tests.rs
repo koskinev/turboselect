@@ -158,7 +158,7 @@ fn large_median() {
 fn nth() {
     let repeat = 1000;
     let max = 10000;
-    let mut pcg = PCGRng::new(5);
+    let mut pcg = PCGRng::new(0);
 
     for _iter in 0..repeat {
         let count = pcg.bounded_usize(1, max);
