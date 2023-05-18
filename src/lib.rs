@@ -24,6 +24,22 @@ const CUT: usize = 1000;
 /// A block of potentially uninitialized bytes, used in the block partitioning methods.
 type Block = [MaybeUninit<u8>; BLOCK];
 
+struct _Block([MaybeUninit<u8>; BLOCK]);
+
+impl _Block {
+    fn new() -> Self {
+        Self([MaybeUninit::uninit(); BLOCK])
+    }
+
+    unsafe fn write(&mut self, index: u8, value: u8) {
+        self.0.get_unchecked_mut(index as usize).write(value);
+    }
+
+    unsafe fn get(&self, index: u8) -> usize {
+        self.0.get_unchecked(index as usize).assume_init() as usize
+    }
+}
+
 /// Hole represents a hole in a slice i.e., an index without valid value
 /// (because it was moved from or duplicated).
 /// In drop, `Hole` will restore the slice by filling the hole
@@ -594,8 +610,8 @@ fn partition_single<T: Ord>(
         let (mut i, mut j, mut k) = (0, 0, 0);
 
         let pivot = Hole::new(slice::from_mut(pivot), 0);
-        let mut le_pivot: Block = MaybeUninit::uninit().assume_init();
-        let mut lt_pivot: Block = MaybeUninit::uninit().assume_init();
+        let mut le_pivot = _Block::new();
+        let mut lt_pivot = _Block::new();
         let mut num_lt: u8 = 0;
         let mut num_le: u8 = 0;
 
@@ -608,35 +624,36 @@ fn partition_single<T: Ord>(
             // └─────────┴──────────┴─────────┴─────────────┘
             //            i          j         k
 
-            // Store the offsets to elements <= pivot and the offsets to elements < pivot after
-            // the first swaps.
+            // Scan the block beginning at k and store the offsets to elements <= pivot.
             for h in 0..size {
                 let elem = data.get_unchecked(k + h as usize);
-                le_pivot[num_le as usize].write(h);
-                lt_pivot[num_lt as usize].write(num_le);
+                le_pivot.write(num_le, h);
                 num_le += !is_less(pivot.element(), elem) as u8;
-                num_lt += is_less(elem, pivot.element()) as u8;
             }
 
-            // Swap each element <= pivot with the element at j. If the moved element is <
-            // pivot, store it's offset to is_lt.
+            // Swap each element <= pivot with the first element > pivot and store the offsets to
+            // elements < pivot.
             for h in 0..num_le {
-                let m = k + le_pivot.get_unchecked(h as usize).assume_init() as usize;
+                let m = k + le_pivot.get(h);
+                let elem = data.get_unchecked(m);
+                lt_pivot.write(num_lt, h);
+                num_lt += is_less(elem, pivot.element()) as u8;
                 swap(data, m, j + h as usize);
             }
 
-            // Swap each element x < pivot with the element at i.
+            // Swap each element < pivot with the first element >= pivot.
             for h in 0..num_lt {
-                let m = j + lt_pivot.get_unchecked(h as usize).assume_init() as usize;
+                let m = j + lt_pivot.get(h);
                 swap(data, m, i + h as usize);
             }
 
+            // Increment the indices
             k += size as usize;
             j += num_le as usize;
             i += num_lt as usize;
 
             // Reset the counters
-            (num_lt, num_le) = (0, 0);
+            (num_le, num_lt) = (0, 0);
 
             // The first part contains elements x < pivot.
             // debug_assert!(data[..i].iter().all(|x| is_less(x, pivot.element())));
@@ -811,15 +828,14 @@ fn partition_dual_high<T: Ord>(
         }
 
         let data = &mut data[l..=r];
-        let origin = data.as_mut_ptr();
         let n = data.len();
         let (mut i, mut j, mut k) = (0, 0, 0);
 
         let low = Hole::new(slice::from_mut(low), 0);
         let high = Hole::new(slice::from_mut(high), 0);
 
-        let mut block: Block = MaybeUninit::uninit().assume_init();
-        let (mut off_j, mut off_k);
+        let mut le_high = _Block::new();
+        let mut lt_low = _Block::new();
         let mut num_lt_low = 0;
         let mut num_le_high = 0;
 
@@ -831,51 +847,34 @@ fn partition_dual_high<T: Ord>(
             // │ < low │ low <= ... <= high │ > high │   ? .. ?    │
             // └───────┴────────────────────┴────────┴─────────────┘
             //          i                    j        k
-            //
-            // Scan the block of elements beginning at k. Then put each element x <= high to the
-            // middle part by swapping it with an element in the range j..k. Since elements in
-            // j..k are x > high, this creates a temporary part between the middle an third parts,
-            // where elements belong to either the first or the middle part. The third part towards
-            // the end of the slice.
-            off_k = 0;
-            while off_k < size {
-                block[num_le_high as usize].write(off_k);
-                let elem = data.get_unchecked(k + off_k as usize);
+
+            // Scan the block beginning at k and store the offsets to elements <= high.
+            for h in 0..size {
+                le_high.write(num_le_high, h);
+                let elem = data.get_unchecked(k + h as usize);
                 num_le_high += !is_less(high.element(), elem) as u8;
-                off_k += 1;
-            }
-            off_j = 0;
-            while off_j < num_le_high {
-                off_k = block.get_unchecked(off_j as usize).assume_init();
-                // data.swap(j + off_j as usize, k + off_k as usize);
-                origin
-                    .add(j + off_j as usize)
-                    .swap(origin.add(k + off_k as usize));
-                off_j += 1;
             }
 
-            // Scan the elements moved to the temporary part in the previous step. If x < low, swap
-            // the element with the first element of the middle part (the element at i) and
-            // increment i. Since the element at i is known to be x >= low, this moves
-            // the middle part to the right by one element. The first part grows by one
-            // element.
-            off_j = 0;
-            while off_j < num_le_high {
-                block[num_lt_low as usize].write(off_j);
-                let elem = data.get_unchecked(j + off_j as usize);
+            // Swap each element <= high with the first element > high and store the offsets to
+            // elements < low.
+            for h in 0..num_le_high {
+                let m = k + le_high.get(h);
+                let elem = data.get_unchecked(m);
+                lt_low.write(num_lt_low, h);
                 num_lt_low += is_less(elem, low.element()) as u8;
-                off_j += 1;
+                swap(data, m, j + h as usize);
             }
-            off_k = 0;
-            while off_k < num_lt_low {
-                off_j = block.get_unchecked(off_k as usize).assume_init();
-                // data.swap(i, j + off as usize);
-                origin.add(i).swap(origin.add(j + off_j as usize));
-                off_k += 1;
-                i += 1;
+
+            // Swap each element < low with the first element >= low.
+            for h in 0..num_lt_low {
+                let m = j + lt_low.get(h);
+                swap(data, m, i + h as usize);
             }
+
+            // Increment the indices
             k += size as usize;
             j += num_le_high as usize;
+            i += num_lt_low as usize;
 
             // Reset the counters
             (num_lt_low, num_le_high) = (0, 0);
