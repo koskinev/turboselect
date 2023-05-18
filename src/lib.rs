@@ -7,7 +7,10 @@
 mod dbg;
 mod pcg_rng;
 mod slice_sort;
-use core::{mem::MaybeUninit, ptr, slice};
+use core::{
+    mem::{ManuallyDrop, MaybeUninit},
+    ptr, slice,
+};
 use pcg_rng::PCGRng;
 
 #[cfg(test)]
@@ -15,7 +18,7 @@ mod tests;
 
 const ALPHA: f64 = 0.5;
 const BETA: f64 = 0.25;
-const BLOCK: usize = 128;
+const BLOCK: usize = 4;
 const CUT: usize = 1000;
 
 /// A block of potentially uninitialized bytes, used in the block partitioning methods.
@@ -27,7 +30,7 @@ type Block = [MaybeUninit<u8>; BLOCK];
 /// position with the value that was originally removed.
 struct Hole<'a, T: 'a> {
     data: &'a mut [T],
-    elt: core::mem::ManuallyDrop<T>,
+    elt: ManuallyDrop<T>,
     pos: usize,
 }
 
@@ -42,7 +45,7 @@ impl<'a, T> Hole<'a, T> {
         let elt = unsafe { ptr::read(data.get_unchecked(pos)) };
         Hole {
             data,
-            elt: core::mem::ManuallyDrop::new(elt),
+            elt: ManuallyDrop::new(elt),
             pos,
         }
     }
@@ -98,13 +101,13 @@ impl<T> Drop for Hole<'_, T> {
 }
 
 fn median_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) -> usize {
-    swap(data, a, b);
-    swap(data, c, d);
-    swap(data, a, c);
-    swap(data, b, d);
-    swap(data, c, e);
-    swap(data, b, c);
-    swap(data, c, e);
+    sort_2(data, a, b);
+    sort_2(data, c, d);
+    sort_2(data, a, c);
+    sort_2(data, b, d);
+    sort_2(data, c, e);
+    sort_2(data, b, c);
+    sort_2(data, c, e);
     c
 }
 
@@ -188,6 +191,19 @@ where
     }
 }
 
+/// Rotates the elements at `a`, `b`, and `c` in the slice `data` such that the element at `a` is
+/// moved to `b`, the element at `b` is moved to `c`, and the element at `c` is moved to `a`.
+unsafe fn rotate_3<T>(data: &mut [T], a: usize, b: usize, c: usize) {
+    let a = data.get_unchecked_mut(a) as *mut T;
+    let b = data.get_unchecked_mut(b) as *mut T;
+    let c = data.get_unchecked_mut(c) as *mut T;
+
+    let tmp = ManuallyDrop::new(ptr::read(b));
+    b.write(ptr::read(a));
+    a.write(ptr::read(c));
+    c.write(ManuallyDrop::into_inner(tmp));
+}
+
 fn sample_size(n: usize) -> usize {
     let n = n as f64;
     let f = n.powf(2. / 3.) * n.ln().powf(1. / 3.);
@@ -220,51 +236,7 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [
     &mut data[..count]
 }
 
-/// Swaps `a` and `b` if `a > b`, and returns true if the swap was performed.
 fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
-    let swap = data[a] > data[b];
-    let offset = (b as isize - a as isize) * swap as isize;
-    unsafe {
-        let a = &mut data[a] as *mut T;
-        let x = a.offset(offset);
-        ptr::swap(a, x);
-        swap
-    }
-}
-
-fn sort_3<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize) -> usize {
-    swap(data, a, b);
-    if swap(data, b, c) {
-        swap(data, a, b);
-    }
-    1
-}
-
-fn sort_4<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize) -> usize {
-    swap(data, a, b);
-    swap(data, c, d);
-    if swap(data, b, c) {
-        swap(data, a, b);
-    }
-    if swap(data, c, d) {
-        swap(data, b, c);
-    }
-    1
-}
-
-fn sort_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) {
-    swap(data, a, d);
-    swap(data, b, e);
-    swap(data, a, c);
-    swap(data, b, d);
-    swap(data, a, b);
-    swap(data, c, e);
-    swap(data, b, c);
-    swap(data, d, e);
-    swap(data, c, d);
-}
-
-fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
     debug_assert!(a != b);
     debug_assert!(a < data.len());
     debug_assert!(b < data.len());
@@ -274,10 +246,53 @@ fn swap<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
         let b = data.get_unchecked_mut(b) as *mut T;
         let min = (&*a).min(&*b) as *const T;
         let swap = min == b;
-        let tmp = std::mem::ManuallyDrop::new(ptr::read(min));
+        let tmp = ManuallyDrop::new(ptr::read(min));
         *b = ptr::read((&*a).max(&*b) as *const T);
-        *a = std::mem::ManuallyDrop::into_inner(tmp);
+        *a = ManuallyDrop::into_inner(tmp);
         swap
+    }
+}
+
+fn sort_3<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize) -> usize {
+    sort_2(data, a, b);
+    if sort_2(data, b, c) {
+        sort_2(data, a, b);
+    }
+    1
+}
+
+fn sort_4<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize) -> usize {
+    sort_2(data, a, b);
+    sort_2(data, c, d);
+    if sort_2(data, b, c) {
+        sort_2(data, a, b);
+    }
+    if sort_2(data, c, d) {
+        sort_2(data, b, c);
+    }
+    1
+}
+
+fn sort_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) {
+    sort_2(data, a, d);
+    sort_2(data, b, e);
+    sort_2(data, a, c);
+    sort_2(data, b, d);
+    sort_2(data, a, b);
+    sort_2(data, c, e);
+    sort_2(data, b, c);
+    sort_2(data, d, e);
+    sort_2(data, c, d);
+}
+
+/// Swaps the elements at indices `a` and `b`.
+fn swap<T>(data: &mut [T], a: usize, b: usize) {
+    unsafe {
+        let a = data.get_unchecked_mut(a) as *mut T;
+        let b = data.get_unchecked_mut(b) as *mut T;
+        let tmp = ManuallyDrop::new(ptr::read(a));
+        *a = ptr::read(b);
+        *b = ManuallyDrop::into_inner(tmp);
     }
 }
 
@@ -545,7 +560,7 @@ fn partition_dual_index_low<T: Ord>(
 /// This variant of the algorithm tests the elements first against the higher pivot and
 /// conditionally against the lower pivot. If most elements are expected to be greater than
 /// the higher pivot, this is faster than the low variant.
-/// 
+///
 /// Panics if the slice has less than two elements, if `p` or `q` are out of bounds or if `p == q`.
 fn partition_dual_index_high<T: Ord>(
     data: &mut [T],
@@ -575,13 +590,12 @@ fn partition_single<T: Ord>(
         }
 
         let data = &mut data[l..=r];
-        let origin = data.as_mut_ptr();
         let n = data.len();
         let (mut i, mut j, mut k) = (0, 0, 0);
 
         let pivot = Hole::new(slice::from_mut(pivot), 0);
-        let mut block: Block = MaybeUninit::uninit().assume_init();
-        let (mut off_j, mut off_k);
+        let mut le_pivot: Block = MaybeUninit::uninit().assume_init();
+        let mut lt_pivot: Block = MaybeUninit::uninit().assume_init();
         let mut num_lt: u8 = 0;
         let mut num_le: u8 = 0;
 
@@ -592,52 +606,34 @@ fn partition_single<T: Ord>(
             // ┌─────────┬──────────┬─────────┬─────────────┐
             // │ < pivot │ == pivot │ > pivot │   ? .. ?    │
             // └─────────┴──────────┴─────────┴─────────────┘
-            //          i            j         k
-            //
-            // Scan the block of elements beginning at k. Then put each element x <= pivot to the
-            // middle part by swapping it with an element in the range j..k. Since elements in
-            // j..k are x > pivot, this creates a temporary part between the middle an third parts,
-            // where elements belong to either the first or the middle part. The third part towards
-            // the end of the slice.
-            off_k = 0;
-            while off_k < size {
-                block[num_le as usize].write(off_k);
-                let elem = data.get_unchecked(k + off_k as usize);
+            //            i          j         k
+
+            // Store the offsets to elements <= pivot and the offsets to elements < pivot after
+            // the first swaps.
+            for h in 0..size {
+                let elem = data.get_unchecked(k + h as usize);
+                le_pivot[num_le as usize].write(h);
+                lt_pivot[num_lt as usize].write(num_le);
                 num_le += !is_less(pivot.element(), elem) as u8;
-                off_k += 1;
-            }
-            off_j = 0;
-            while off_j < num_le {
-                off_k = block.get_unchecked(off_j as usize).assume_init();
-                // data.swap(j + offset_j, k + offset_k);
-                origin
-                    .add(j + off_j as usize)
-                    .swap(origin.add(k + off_k as usize));
-                off_j += 1;
+                num_lt += is_less(elem, pivot.element()) as u8;
             }
 
-            // Scan the elements moved to the temporary part in the previous step. If x < pivot,
-            // swap the element with the first element of the middle part (the element
-            // at i) and increment i. Since the element at i is known to be x >= pivot,
-            // this moves the middle part to the right by one element. The first part
-            // grows by one element.
-            off_j = 0;
-            while off_j < num_le {
-                block[num_lt as usize].write(off_j);
-                let elem = data.get_unchecked(j + off_j as usize);
-                num_lt += is_less(elem, pivot.element()) as u8;
-                off_j += 1;
+            // Swap each element <= pivot with the element at j. If the moved element is <
+            // pivot, store it's offset to is_lt.
+            for h in 0..num_le {
+                let m = k + le_pivot.get_unchecked(h as usize).assume_init() as usize;
+                swap(data, m, j + h as usize);
             }
-            off_k = 0;
-            while off_k < num_lt {
-                off_j = block.get_unchecked(off_k as usize).assume_init();
-                // data.swap(i, j + offset_j);
-                origin.add(i).swap(origin.add(j + off_j as usize));
-                off_k += 1;
-                i += 1;
+
+            // Swap each element x < pivot with the element at i.
+            for h in 0..num_lt {
+                let m = j + lt_pivot.get_unchecked(h as usize).assume_init() as usize;
+                swap(data, m, i + h as usize);
             }
+
             k += size as usize;
             j += num_le as usize;
+            i += num_lt as usize;
 
             // Reset the counters
             (num_lt, num_le) = (0, 0);
