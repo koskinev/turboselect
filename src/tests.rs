@@ -19,7 +19,7 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
 #[test]
 fn lomuto_single_index() {
     let repeat = 1000;
-    let count = 30;
+    let count = 300;
     let mut rng = PCGRng::new(0);
 
     for iter in 0..repeat {
@@ -85,7 +85,7 @@ fn lomuto_indexed_high() {
 #[test]
 fn lomuto_dual_low() {
     let repeat = 1000;
-    let count = 300;
+    let count = 30;
     let mut rng = PCGRng::new(0);
 
     for _iter in 0..repeat {
