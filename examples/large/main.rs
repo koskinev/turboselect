@@ -62,31 +62,31 @@ fn main() {
         repeat,
     );
 
-    // eprintln!("Selecting the 42nd element using std::slice::select_nth_unstable ...");
-    // timeit(
-    //     || {
-    //         let mut data = master.clone();
-    //         data.select_nth_unstable(42);
-    //     },
-    //     repeat,
-    // );
+    eprintln!("Selecting the 42nd element using std::slice::select_nth_unstable ...");
+    timeit(
+        || {
+            let mut data = master.clone();
+            data.select_nth_unstable(42);
+        },
+        repeat,
+    );
 
-    // let mid = master.len() / 2;
-    // eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
-    // timeit(
-    //     || {
-    //         let mut data = master.clone();
-    //         select_nth_unstable(data.as_mut_slice(), mid);
-    //     },
-    //     repeat,
-    // );
+    let mid = master.len() / 2;
+    eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
+    timeit(
+        || {
+            let mut data = master.clone();
+            select_nth_unstable(data.as_mut_slice(), mid);
+        },
+        repeat,
+    );
 
-    // eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
-    // timeit(
-    //     || {
-    //         let mut data = master.clone();
-    //         data.select_nth_unstable(mid);
-    //     },
-    //     repeat,
-    // );
+    eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
+    timeit(
+        || {
+            let mut data = master.clone();
+            data.select_nth_unstable(mid);
+        },
+        repeat,
+    );
 }
