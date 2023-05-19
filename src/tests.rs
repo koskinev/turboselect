@@ -1,7 +1,8 @@
 use crate::{
-    median_5, partition_3_dual_pivot_high, partition_3_dual_index_high, partition_3_dual_index_low,
-    partition_3_dual_pivot_low, partition_3_single_index, pcg_rng::PCGRng, rotate_3, select_floyd_rivest,
-    select_nth_small, select_nth_unstable, sort_3, sort_4, partition_2_single_index,
+    _partition_2_single_pivot, median_5, partition_2_single_index, partition_3_dual_index_high,
+    partition_3_dual_index_low, partition_3_dual_pivot_high, partition_3_dual_pivot_low,
+    partition_3_single_index, pcg_rng::PCGRng, rotate_3, select_floyd_rivest, select_nth_small,
+    select_nth_unstable, sort_3, sort_4,
 };
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -17,7 +18,7 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
 }
 
 #[test]
-fn lomuto_2_single_index() {
+fn hoare_2_single_index() {
     let repeat = 1000;
     let count = 300;
     let mut rng = PCGRng::new(0);
@@ -34,7 +35,6 @@ fn lomuto_2_single_index() {
         assert!(data[u..].iter().all(|elem| elem >= &pivot));
     }
 }
-
 
 #[test]
 fn lomuto_3_single_index() {

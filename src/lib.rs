@@ -16,8 +16,8 @@ use pcg_rng::PCGRng;
 #[cfg(test)]
 mod tests;
 
-const ALPHA: f64 = 0.5;
-const BETA: f64 = 0.25;
+const ALPHA: f64 = 0.25;
+const BETA: f64 = 0.15;
 const BLOCK: usize = 128;
 const CUT: usize = 1000;
 
@@ -55,13 +55,22 @@ struct Elem<'a, T> {
 }
 
 impl<'a, T> Elem<'a, T> {
-    /// Creates a new `Elem` from a slice of elements without selecting an element.
-    fn new(data: &'a mut [T]) -> Self {
-        Self {
-            data,
-            ptr: None,
-            tmp: MaybeUninit::uninit(),
-        }
+    /// Writes the temporary value to the current element and sets the current element to `None`.
+    ///
+    /// Unsafe because the current element must be selected and the temporary value must be
+    /// initialized.
+    unsafe fn deselect(&mut self) {
+        debug_assert!(self.ptr.is_some());
+
+        ptr::copy_nonoverlapping(self.tmp.assume_init_ref(), self.ptr.unwrap_unchecked(), 1);
+        self.ptr = None;
+    }
+
+    /// Returns a reference to the current element. Unsafe because the element may not be selected.
+    unsafe fn element(&self) -> &T {
+        debug_assert!(self.ptr.is_some());
+
+        self.tmp.assume_init_ref()
     }
 
     /// Creates a new `Elem` from a single element.
@@ -79,13 +88,6 @@ impl<'a, T> Elem<'a, T> {
         }
     }
 
-    /// Returns a reference to the current element. Unsafe because the element may not be selected.
-    unsafe fn element(&self) -> &T {
-        debug_assert!(self.ptr.is_some());
-
-        self.tmp.assume_init_ref()
-    }
-
     /// Returns a reference to the element at `index`. Unsafe because index must be in bounds.
     unsafe fn get(&self, index: usize) -> &T {
         debug_assert!(index < self.data.len());
@@ -93,19 +95,13 @@ impl<'a, T> Elem<'a, T> {
         self.data.get_unchecked(index)
     }
 
-    /// Moves the position of the current element to `index`. This also moves the position of the
-    /// element at `index` to the previous position of the current element.
-    ///
-    /// Unsafe because index must be in bounds and the current element must be selected.
-    unsafe fn move_to(&mut self, index: usize) {
-        debug_assert!(index < self.data.len());
-        debug_assert!(self.ptr.is_some());
-
-        let src = self.data.as_mut_ptr().add(index);
-        debug_assert!(Some(src) != self.ptr);
-
-        self.ptr.unwrap_unchecked().write(src.read());
-        self.ptr = Some(src);
+    /// Creates a new `Elem` from a slice of elements without selecting an element.
+    fn new(data: &'a mut [T]) -> Self {
+        Self {
+            data,
+            ptr: None,
+            tmp: MaybeUninit::uninit(),
+        }
     }
 
     /// Selects the element at `index` as the current element. Unsafe because index must be in
@@ -116,6 +112,21 @@ impl<'a, T> Elem<'a, T> {
         let src = self.data.as_mut_ptr().add(index);
         self.ptr = Some(src);
         self.tmp.write(ptr::read(src));
+    }
+
+    /// Sets the position of the current element to `index`. This also moves the position of the
+    /// element at `index` to the previous position of the current element.
+    ///
+    /// Unsafe because index must be in bounds and the current element must be selected.
+    unsafe fn set(&mut self, index: usize) {
+        debug_assert!(index < self.data.len());
+        debug_assert!(self.ptr.is_some());
+
+        let src = self.data.as_mut_ptr().add(index);
+        debug_assert!(Some(src) != self.ptr);
+
+        self.ptr.unwrap_unchecked().write(src.read());
+        self.ptr = Some(src);
     }
 
     /// Swaps the current element with the element at `index`. Unsafe because index must be in
@@ -372,12 +383,12 @@ fn unordered_swap<T: Ord>(data: &mut [T], mut left: usize, mut right: usize, cou
     let mut elem = Elem::new(inner);
     unsafe {
         elem.select(left);
-        elem.move_to(right);
+        elem.set(right);
         for _ in 1..count {
             left += 1;
-            elem.move_to(left);
+            elem.set(left);
             right -= 1;
-            elem.move_to(right);
+            elem.set(right);
         }
     }
 }
@@ -580,7 +591,7 @@ fn partition_2_single_index<T: Ord>(
     data.swap(0, p);
     let (head, tail) = data.split_at_mut(1);
     let pivot = &mut head[0];
-    let u = partition_2_single_pivot(tail, pivot, is_less);
+    let u = _partition_2_single_pivot(tail, pivot, is_less);
     data.swap(0, u);
     u
 }
@@ -671,6 +682,110 @@ fn partition_3_dual_index_high<T: Ord>(
     (u, v + 1)
 }
 
+fn _partition_2_single_pivot<T: Ord>(
+    data: &mut [T],
+    pivot: &mut T,
+    is_less: impl Fn(&T, &T) -> bool,
+) -> usize {
+    unsafe {
+        let (mut l, mut r) = (0, data.len() - 1);
+        while l < r && is_less(pivot, data.get_unchecked(r)) {
+            r -= 1;
+        }
+        while l < r && is_less(data.get_unchecked(l), pivot) {
+            l += 1;
+        }
+
+        let data = &mut data[l..=r];
+        let n = data.len();
+        let mut tmp = Elem::new(data);
+        let (mut i, mut j) = (0, n - 1);
+        let mut h: u8;
+        let mut num_ge: u8 = 0;
+        let mut num_lt: u8 = 0;
+        let mut start_ge: u8 = 0;
+        let mut start_lt: u8 = 0;
+
+        let mut offsets_ge = Block::new();
+        let mut offsets_lt = Block::new();
+
+        while j - i + 1 > 2 * BLOCK {
+            if num_ge == 0 {
+                start_ge = 0;
+                h = 0;
+                while h < BLOCK as u8 {
+                    offsets_ge.write(num_ge, h);
+                    let elem = tmp.get(i + h as usize);
+                    num_ge += !is_less(elem, pivot) as u8;
+                    h += 1;
+                }
+            }
+            if num_lt == 0 {
+                start_lt = 0;
+                h = 0;
+                while h < BLOCK as u8 {
+                    offsets_lt.write(num_lt, h);
+                    let elem = tmp.get(j - h as usize);
+                    num_lt += is_less(elem, pivot) as u8;
+                    h += 1;
+                }
+            }
+
+            let num = num_ge.min(num_lt);
+            if num > 0 {
+                let mut m = i + offsets_ge.get(start_ge);
+                let mut n = j - offsets_lt.get(start_lt);
+                h = 1;
+
+                tmp.select(m);
+                tmp.set(n);
+                while h < num {
+                    m = i + offsets_ge.get(start_ge + h);
+                    n = j - offsets_lt.get(start_lt + h);
+                    tmp.set(m);
+                    tmp.set(n);
+                    h += 1;
+                }
+                tmp.deselect();
+
+                num_ge -= num;
+                num_lt -= num;
+                start_ge += num;
+                start_lt += num;
+            }
+
+            i += BLOCK * (num_ge == 0) as usize;
+            j -= BLOCK * (num_lt == 0) as usize;
+        }
+        if num_ge > 0 {
+            i += start_ge as usize;
+        }
+        if num_lt > 0 {
+            j -= start_lt as usize;
+        }
+        loop {
+            while i < j && tmp.get(i) < pivot {
+                i += 1;
+            }
+            while i < j && tmp.get(j) >= pivot {
+                j -= 1;
+            }
+            if i < j {
+                tmp.select(i);
+                tmp.swap(j);
+                i += 1;
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+        while i < n && tmp.get(i) < pivot {
+            i += 1;
+        }
+        l + i
+    }
+}
+
 fn partition_2_single_pivot<T: Ord>(
     data: &mut [T],
     pivot: &mut T,
@@ -695,7 +810,6 @@ fn partition_2_single_pivot<T: Ord>(
         let mut num_lt: u8 = 0;
         let mut h: u8 = 0;
 
-
         while k < n {
             let size = (n - k).min(BLOCK) as u8;
 
@@ -705,7 +819,7 @@ fn partition_2_single_pivot<T: Ord>(
             // └─────────┴──────────┴─────────────┘
             //            i          k
 
-            // Scan the block beginning at k and store the offsets to elements <= pivot.
+            // Scan the block beginning at k and store the offsets to elements < pivot.
             while h < size {
                 offsets.write(num_lt, h);
                 let elem = tmp.get(k + h as usize);
@@ -756,7 +870,6 @@ fn partition_3_single_pivot<T: Ord>(
         let mut num_lt: u8 = 0;
         let mut num_le: u8 = 0;
         let mut h: u8 = 0;
-
 
         while k < n {
             let size = (n - k).min(BLOCK) as u8;
@@ -863,7 +976,6 @@ fn partition_3_dual_pivot_low<T: Ord>(
         let mut num_gt_high: u8 = 0;
         let mut num_ge_low: u8 = 0;
         let mut h: u8 = 1;
-
 
         while k > 0 {
             let size = k.min(BLOCK) as u8;
@@ -983,7 +1095,6 @@ fn partition_3_dual_pivot_high<T: Ord>(
         let mut num_lt_low = 0;
         let mut num_le_high = 0;
         let mut h: u8 = 0;
-
 
         while k < n {
             let size = (n - k).min(BLOCK) as u8;
