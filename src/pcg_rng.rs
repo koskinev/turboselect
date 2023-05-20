@@ -9,6 +9,11 @@ impl PCGRng {
     const INCREMENT: u128 = 63641362238467930051442695040888963407_u128;
     const MULTIPLIER: u128 = 25492979953554139244865540595714422341_u128;
 
+    /// Returns a mutable reference to the RNG.
+    pub fn as_mut(&mut self) -> &mut Self {
+        self
+    }
+
     /// Yields a `u32` in the range `[low, high)`.
     pub fn bounded_u32(&mut self, low: u32, high: u32) -> u32 {
         let range = high - low;
@@ -40,11 +45,9 @@ impl PCGRng {
         let mut l = m as u64;
         if l < range {
             let mut t = u64::MAX - range;
+            t -= range * (t >= range) as u64;
             if t >= range {
-                t -= range;
-                if t >= range {
-                    t %= range;
-                }
+                t %= range;
             }
             while l < t {
                 x = self.u64();
