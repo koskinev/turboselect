@@ -35,9 +35,9 @@ impl Block {
     }
 }
 
-struct Elem<'a, T> {
-    /// The slice of elements.
-    data: &'a mut [T],
+struct Elem<T> {
+    /// A pointer to the first element of the slice.
+    origin: *mut T,
 
     /// A pointer to the position of the current element.
     ptr: Option<*mut T>,
@@ -46,18 +46,7 @@ struct Elem<'a, T> {
     tmp: MaybeUninit<T>,
 }
 
-impl<'a, T> Elem<'a, T> {
-    /// Writes the temporary value to the current element and sets the current element to `None`.
-    ///
-    /// Unsafe because the current element must be selected and the temporary value must be
-    /// initialized.
-    unsafe fn deselect(&mut self) {
-        debug_assert!(self.ptr.is_some());
-
-        ptr::copy_nonoverlapping(self.tmp.assume_init_ref(), self.ptr.unwrap_unchecked(), 1);
-        self.ptr = None;
-    }
-
+impl<T> Elem<T> {
     /// Returns a reference to the current element. Unsafe because the element may not be selected.
     unsafe fn element(&self) -> &T {
         debug_assert!(self.ptr.is_some());
@@ -66,15 +55,14 @@ impl<'a, T> Elem<'a, T> {
     }
 
     /// Creates a new `Elem` from a single element.
-    fn from_mut(elem: &'a mut T) -> Self {
-        let data = slice::from_mut(elem);
+    fn from_mut(elem: &mut T) -> Self {
+        let origin = elem as *mut T;
         unsafe {
-            let ptr = data.as_mut_ptr();
-            let val = ptr.read();
+            let val = origin.read();
             let tmp = MaybeUninit::new(val);
             Self {
-                data,
-                ptr: Some(ptr),
+                origin,
+                ptr: Some(origin),
                 tmp,
             }
         }
@@ -82,26 +70,22 @@ impl<'a, T> Elem<'a, T> {
 
     /// Returns a reference to the element at `index`. Unsafe because index must be in bounds.
     unsafe fn get(&self, index: usize) -> &T {
-        debug_assert!(index < self.data.len());
-
-        self.data.get_unchecked(index)
+        &*self.origin.add(index)
     }
 
-    /// Creates a new `Elem` from a slice of elements without selecting an element.
-    fn new(data: &'a mut [T]) -> Self {
+    fn new(origin: *mut T) -> Self {
         Self {
-            data,
+            origin,
             ptr: None,
             tmp: MaybeUninit::uninit(),
         }
     }
 
-    /// Selects the element at `index` as the current element. Unsafe because index must be in
+    /// Selects the element at `index` as the current element. Unsafe because the index must be in
     /// bounds.
     unsafe fn select(&mut self, index: usize) {
-        debug_assert!(index < self.data.len());
-
-        let src = self.data.as_mut_ptr().add(index);
+        debug_assert!(self.ptr.is_none());
+        let src = self.origin.add(index);
         self.ptr = Some(src);
         self.tmp.write(ptr::read(src));
     }
@@ -111,11 +95,8 @@ impl<'a, T> Elem<'a, T> {
     ///
     /// Unsafe because index must be in bounds and the current element must be selected.
     unsafe fn set(&mut self, index: usize) {
-        debug_assert!(index < self.data.len());
         debug_assert!(self.ptr.is_some());
-
-        let src = self.data.as_mut_ptr().add(index);
-
+        let src = self.origin.add(index);
         self.ptr.unwrap_unchecked().write(src.read());
         self.ptr = Some(src);
     }
@@ -123,17 +104,15 @@ impl<'a, T> Elem<'a, T> {
     /// Swaps the current element with the element at `index`. Unsafe because index must be in
     /// bounds and the current element must be selected.
     unsafe fn swap(&mut self, index: usize) {
-        debug_assert!(index < self.data.len());
         debug_assert!(self.ptr.is_some());
-
-        let dst = self.data.as_mut_ptr().add(index);
+        let dst = self.origin.add(index);
         self.ptr.unwrap_unchecked().write(dst.read());
         dst.write(self.tmp.assume_init_read());
         self.ptr = None;
     }
 }
 
-impl<T> Drop for Elem<'_, T> {
+impl<T> Drop for Elem<T> {
     #[inline]
     fn drop(&mut self) {
         // Write the temporary value to the current element.
@@ -246,7 +225,7 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [
     let len = data.len();
     assert!(count <= len);
     unsafe {
-        let mut elem = Elem::new(data);
+        let mut elem = Elem::new(data.as_mut_ptr());
         elem.select(0);
         for i in 1..count {
             let j = rng.bounded_usize(i, len);
@@ -274,9 +253,10 @@ fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
     debug_assert!(a < data.len());
     debug_assert!(b < data.len());
 
+    let origin = data.as_mut_ptr();
     unsafe {
-        let a = data.get_unchecked_mut(a) as *mut T;
-        let b = data.get_unchecked_mut(b) as *mut T;
+        let a = origin.add(a) as *mut T;
+        let b = origin.add(b) as *mut T;
         let min = (&*a).min(&*b) as *const T;
         let swap = min == b;
         let tmp = ManuallyDrop::new(ptr::read(min));
@@ -386,12 +366,7 @@ where
     (u + offset, v + offset)
 }
 
-fn quickselect<T, F>(
-    data: &mut [T],
-    index: usize,
-    is_less: F,
-    rng: &mut PCGRng,
-) -> (usize, usize)
+fn quickselect<T, F>(data: &mut [T], index: usize, is_less: F, rng: &mut PCGRng) -> (usize, usize)
 where
     T: Ord,
     F: Fn(&T, &T) -> bool + Copy,
@@ -489,7 +464,7 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
 
         let data = &mut tail[l..=r];
         let n = data.len();
-        let mut tmp = Elem::new(data);
+        let mut tmp = Elem::new(data.as_mut_ptr());
         let (mut i, mut j) = (0, n - 1);
         let mut h: u8;
         let mut num_ge: u8 = 0;
@@ -524,20 +499,15 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
 
             let num = num_ge.min(num_lt);
             if num > 0 {
-                let mut m = i + offsets_ge.get(start_ge);
-                let mut n = j - offsets_lt.get(start_lt);
-                h = 1;
 
-                tmp.select(m);
-                tmp.set(n);
+                h = 0;
                 while h < num {
-                    m = i + offsets_ge.get(start_ge + h);
-                    n = j - offsets_lt.get(start_lt + h);
-                    tmp.set(m);
-                    tmp.set(n);
+                    let m = i + offsets_ge.get(start_ge + h);
+                    let n = j - offsets_lt.get(start_lt + h);
+                    tmp.select(m);
+                    tmp.swap(n);
                     h += 1;
                 }
-                tmp.deselect();
 
                 num_ge -= num;
                 num_lt -= num;
@@ -616,7 +586,7 @@ fn lomuto_ternary_partition<T: Ord>(
         let (mut i, mut j, mut k) = (0, 0, 0);
 
         let pivot = Elem::from_mut(pivot);
-        let mut tmp = Elem::new(data);
+        let mut tmp = Elem::new(data.as_mut_ptr());
         let mut offsets = Block::new();
         let mut num_lt: u8 = 0;
         let mut num_le: u8 = 0;

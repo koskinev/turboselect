@@ -17,7 +17,12 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
 
 #[test]
 fn hoare_2_single_index() {
+
+    #[cfg(not(miri))]
     let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
     let count = 300;
     let mut rng = PCGRng::new(0);
 
@@ -36,7 +41,12 @@ fn hoare_2_single_index() {
 
 #[test]
 fn lomuto_3_single_index() {
+    
+    #[cfg(not(miri))]
     let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
     let count = 300;
     let mut rng = PCGRng::new(0);
 
@@ -56,7 +66,12 @@ fn lomuto_3_single_index() {
 
 #[test]
 fn floyd_rivest_300() {
+    
+    #[cfg(not(miri))]
     let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
     let count = 300;
     let mut k = 0;
     let mut rng = PCGRng::new(0);
@@ -77,7 +92,12 @@ fn floyd_rivest_300() {
 #[test]
 fn large_median() {
     let mut pcg = PCGRng::new(123);
+
+    #[cfg(not(miri))]
     let count = 10_000_000;
+    #[cfg(miri)]
+    let count = 1000;
+    
     let mid = count / 2;
 
     let mut data: Vec<usize> = (0..count).collect();
@@ -88,8 +108,17 @@ fn large_median() {
 
 #[test]
 fn nth() {
+    
+    #[cfg(not(miri))]
     let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
+    #[cfg(not(miri))]
     let max = 10000;
+    #[cfg(miri)]
+    let max = 1000;
+
     let mut pcg = PCGRng::new(0);
 
     for _iter in 0..repeat {
@@ -110,7 +139,12 @@ fn nth() {
 
 #[test]
 fn nth_small() {
+
+    #[cfg(not(miri))]
     let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+    
     let max = 1000;
     let mut pcg = PCGRng::new(123);
     let is_less = |a: &usize, b: &usize| a < b;
@@ -147,7 +181,11 @@ fn sample_10() {
 fn min_10() {
     let len = 10;
     let mut rng = PCGRng::new(0);
+    
+    #[cfg(not(miri))]
     let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 10;
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
@@ -161,7 +199,12 @@ fn min_10() {
 
 #[test]
 fn sort3() {
-    let repeat = 10000;
+
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
     let count = 3;
     let mut rng = PCGRng::new(0);
 
@@ -175,7 +218,12 @@ fn sort3() {
 
 #[test]
 fn sort4() {
-    let repeat = 10000;
+    
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
     let count = 4;
     let mut rng = PCGRng::new(0);
 
@@ -190,7 +238,12 @@ fn sort4() {
 
 #[test]
 fn median5() {
-    let repeat = 10000;
+    
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
     let count = 5;
     let mut rng = PCGRng::new(0);
 
