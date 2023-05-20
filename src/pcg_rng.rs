@@ -72,7 +72,7 @@ impl PCGRng {
 
     /// Yields a `usize` in the range `[0, bound)`.
     pub fn bounded_usize(&mut self, low: usize, high: usize) -> usize {
-        match std::mem::size_of::<usize>() {
+        match core::mem::size_of::<usize>() {
             4 => self.bounded_u32(low as u32, high as u32) as usize,
             8 => self.bounded_u64(low as u64, high as u64) as usize,
             16 => self.bounded_u128(low as u128, high as u128) as usize,
