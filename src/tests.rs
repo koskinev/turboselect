@@ -1,7 +1,7 @@
 use crate::{
-    _partition_2_single_pivot, median_5, partition_2_single_index, partition_3_dual_index_high,
+    floyd_rivest, median_5, partition_2_single_index, partition_3_dual_index_high,
     partition_3_dual_index_low, partition_3_dual_pivot_high, partition_3_dual_pivot_low,
-    partition_3_single_index, pcg_rng::PCGRng, rotate_3, select_floyd_rivest, select_nth_small,
+    partition_3_single_index, pcg_rng::PCGRng, sample, select_min, select_nth_small,
     select_nth_unstable, sort_3, sort_4,
 };
 
@@ -143,7 +143,7 @@ fn lomuto_3_dual_high() {
 }
 
 #[test]
-fn floyd_rivest() {
+fn floyd_rivest_300() {
     let repeat = 1000;
     let count = 300;
     let mut k = 0;
@@ -151,7 +151,7 @@ fn floyd_rivest() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        let (u, v) = select_floyd_rivest(&mut data, k, usize::lt, &mut rng);
+        let (u, v) = floyd_rivest(&mut data, k, usize::lt, &mut rng);
         assert!(u <= k && v >= k && v < count);
         let kth = data[k];
         assert_eq!(data[u], kth);
@@ -223,12 +223,32 @@ fn nth_small() {
 }
 
 #[test]
-fn rotate3() {
-    let mut data = [1, 2, 3];
-    unsafe {
-        rotate_3(&mut data, 0, 1, 2);
+fn sample_10() {
+    let len = 20;
+    let count = 10;
+    let mut rng = PCGRng::new(0);
+    let mut data: Vec<_> = (0..len).collect();
+
+    sample(data.as_mut_slice(), count, rng.as_mut());
+    for i in 0..len {
+        assert!(data.contains(&i));
     }
-    assert_eq!(data, [3, 1, 2]);
+}
+
+#[test]
+fn min_10() {
+    let len = 10;
+    let mut rng = PCGRng::new(0);
+    let repeat = 1000;
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
+        shuffle(data.as_mut_slice(), rng.as_mut());
+
+        let (_u, v) = select_min(data.as_mut_slice(), usize::lt);
+        let min = &data[0];
+        assert!(data[..=v].iter().all(|elem| elem == min));
+    }
 }
 
 #[test]
