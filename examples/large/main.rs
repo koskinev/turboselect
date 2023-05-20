@@ -52,7 +52,7 @@ fn main() {
     let mid = count / 2;
     let mut rng = PCGRng::new(1234);
 
-    eprintln!("Testing {count} elements");
+    eprintln!("Testing with {count} elements");
     eprintln!("Selecting the 42nd element using the Floyd & Rivest algorithm ...");
     timeit(
         || random_u32s(count, rng.as_mut()),
