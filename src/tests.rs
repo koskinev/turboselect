@@ -1,8 +1,6 @@
 use crate::{
-    floyd_rivest, median_5, partition_2_single_index, partition_3_dual_index_high,
-    partition_3_dual_index_low, partition_3_dual_pivot_high, partition_3_dual_pivot_low,
-    partition_3_single_index, pcg_rng::PCGRng, sample, select_min, select_nth_small,
-    select_nth_unstable, sort_3, sort_4,
+    floyd_rivest_select, median_5, hoare_partition, lomuto_ternary_partition, pcg_rng::PCGRng,
+    sample, select_min, quickselect, select_nth_unstable, sort_3, sort_4,
 };
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -29,7 +27,7 @@ fn hoare_2_single_index() {
         let p = iter % count;
         let pivot = data[p];
 
-        let u = partition_2_single_index(&mut data, p, usize::lt);
+        let u = hoare_partition(&mut data, p, usize::lt);
 
         assert!(data[..u].iter().all(|elem| elem < &pivot));
         assert!(data[u..].iter().all(|elem| elem >= &pivot));
@@ -48,97 +46,11 @@ fn lomuto_3_single_index() {
         let p = iter % count;
         let pivot = data[p];
 
-        let (u, v) = partition_3_single_index(&mut data, p, usize::lt);
+        let (u, v) = lomuto_ternary_partition(&mut data, p, usize::lt);
 
         assert!(data[..u].iter().all(|elem| elem < &pivot));
         assert!(data[u..=v].iter().all(|elem| elem == &pivot));
         assert!(data[v + 1..].iter().all(|elem| elem > &pivot));
-    }
-}
-
-#[test]
-fn lomuto_3_dual_index_low() {
-    let repeat = 1000;
-    let count = 300;
-    let mut rng = PCGRng::new(0);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-
-        let p = rng.bounded_usize(0, count - 1);
-        let q = rng.bounded_usize(p + 1, count);
-
-        let low = data[p].min(data[q]);
-        let high = data[p].max(data[q]);
-
-        let (u, v) = partition_3_dual_index_low(&mut data, p, q, usize::lt);
-        assert!(data[..u].iter().all(|elem| elem < &low));
-        assert!(data[u..=v].iter().all(|elem| elem >= &low));
-        assert!(data[u..=v].iter().all(|elem| elem <= &high));
-        assert!(data[v + 1..].iter().all(|elem| elem > &high));
-    }
-}
-
-#[test]
-fn lomuto_3_dual_index_high() {
-    let repeat = 1000;
-    let count = 300;
-    let mut rng = PCGRng::new(0);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-
-        let p = rng.bounded_usize(0, count - 1);
-        let q = rng.bounded_usize(p + 1, count);
-
-        let low = data[p].min(data[q]);
-        let high = data[p].max(data[q]);
-
-        let (u, v) = partition_3_dual_index_high(&mut data, p, q, usize::lt);
-        assert!(data[..u].iter().all(|elem| elem < &low));
-        assert!(data[u..=v].iter().all(|elem| elem >= &low));
-        assert!(data[u..=v].iter().all(|elem| elem <= &high));
-        assert!(data[v + 1..].iter().all(|elem| elem > &high));
-    }
-}
-
-#[test]
-fn lomuto_3_dual_low() {
-    let repeat = 1000;
-    let count = 30;
-    let mut rng = PCGRng::new(0);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-
-        let mut low = rng.bounded_usize(0, count);
-        let mut high = rng.bounded_usize(low, count);
-
-        let (u, v) = partition_3_dual_pivot_low(&mut data, &mut low, &mut high, usize::lt);
-        assert!(data[..u].iter().all(|elem| elem < &low));
-        assert!(data[u..v].iter().all(|elem| elem >= &low));
-        assert!(data[u..v].iter().all(|elem| elem <= &high));
-        assert!(data[v..].iter().all(|elem| elem > &high));
-    }
-}
-
-#[test]
-fn lomuto_3_dual_high() {
-    let repeat = 1000;
-    let count = 300;
-    let mut rng = PCGRng::new(0);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-
-        let mut low = rng.bounded_usize(0, count);
-        let mut high = rng.bounded_usize(low, count);
-
-        let (u, v) = partition_3_dual_pivot_high(&mut data, &mut low, &mut high, usize::lt);
-        assert!(data[..u].iter().all(|elem| elem < &low));
-        assert!(data[u..v].iter().all(|elem| elem >= &low));
-        assert!(data[u..v].iter().all(|elem| elem <= &high));
-        assert!(data[v..].iter().all(|elem| elem > &high));
     }
 }
 
@@ -151,17 +63,13 @@ fn floyd_rivest_300() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        let (u, v) = floyd_rivest(&mut data, k, usize::lt, &mut rng);
+        let (u, v) = floyd_rivest_select(&mut data, k, usize::lt, &mut rng);
         assert!(u <= k && v >= k && v < count);
         let kth = data[k];
         assert_eq!(data[u], kth);
         assert_eq!(data[v], kth);
-        // assert!(data[..u].iter().all(|elem| elem < &kth));
         assert!(data[..k].iter().all(|elem| elem <= &kth));
         assert!(data[k..].iter().all(|elem| elem >= &kth));
-        // if v < count - 1 {
-        //     assert!(data[v + 1..].iter().all(|elem| elem > &kth));
-        // }
         k = (k + 1) % count;
     }
 }
@@ -213,7 +121,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
         let index = pcg.bounded_usize(0, count);
-        let (u, v) = select_nth_small(&mut data, index, is_less, &mut pcg);
+        let (u, v) = quickselect(&mut data, index, is_less, &mut pcg);
         let nth = data[index];
         assert_eq!(data[u], nth);
         assert_eq!(data[v], nth);

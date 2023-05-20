@@ -1,12 +1,4 @@
-#![feature(specialization)]
-#![feature(strict_provenance)]
-#![feature(sized_type_properties)]
-#![feature(maybe_uninit_slice)]
-#![feature(ptr_sub_ptr)]
-
-mod dbg;
 mod pcg_rng;
-mod slice_sort;
 use core::{
     mem::{ManuallyDrop, MaybeUninit},
     ptr, slice,
@@ -244,45 +236,8 @@ where
     };
 
     // Find the pivot
-    let (low, _high) = floyd_rivest(sample, index, is_less, rng);
+    let (low, _high) = floyd_rivest_select(sample, index, is_less, rng);
     low
-}
-
-fn prepare_partition_3<T: Ord, F>(
-    data: &mut [T],
-    index: usize,
-    is_less: F,
-    rng: &mut PCGRng,
-) -> (usize, usize)
-where
-    F: Fn(&T, &T) -> bool + Copy,
-{
-    // Take a random sample from the data for pivot selection
-    let len = data.len();
-    let (count, p, q) = sample_parameters(index, len);
-    let sample = sample(data, count, rng);
-
-    // Find the pivots
-    let (q_low, q_high) = floyd_rivest(sample, q, is_less, rng);
-
-    let (p_high, q_low) = if p < q_low {
-        // The low pivot must be less than the high pivot
-        let (_, p_high) = floyd_rivest(&mut sample[..q_low], p, is_less, rng);
-        (p_high, q_low)
-    } else {
-        // The low pivot is equal to the high pivot
-        (q_low, q_low + 1)
-    };
-
-    // Move sample elements >= high pivot to the end of the slice
-    unordered_swap(data, q_high + 1, len - 1, count - q_high - 1);
-
-    // Move sample elements == high pivot before the elements just moved to the end of the slice
-    unordered_swap(data, q_low, len - count + q_high, q_high - q_low + 1);
-
-    // Return the position of the last element equal to the low pivot and the position of the
-    // first element equal to the high pivot
-    (p_high, len - count + q_low)
 }
 
 /// Takes a `count` element random sample from the slice, placing it into the beginning of the
@@ -307,9 +262,9 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [
 pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
     let mut rng = PCGRng::new(0);
     if data.len() < CUT {
-        select_nth_small(data, index, T::lt, rng.as_mut());
+        quickselect(data, index, T::lt, rng.as_mut());
     } else {
-        floyd_rivest(data, index, T::lt, rng.as_mut());
+        floyd_rivest_select(data, index, T::lt, rng.as_mut());
     }
     &data[index]
 }
@@ -363,47 +318,9 @@ fn sort_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usi
     sort_2(data, c, d);
 }
 
-/// Performs an unordered swap of the first `count` elements starting from `left` with the last
-/// `count` elements ending at and including`right`.
-fn unordered_swap<T: Ord>(data: &mut [T], mut left: usize, mut right: usize, count: usize) {
-    if count == 0 {
-        return;
-    }
-    debug_assert!(left + count <= right);
-    debug_assert!(right <= data.len());
-    let inner = data[left..=right].as_mut();
-    (left, right) = (0, inner.len() - 1);
-    let mut elem = Elem::new(inner);
-    unsafe {
-        elem.select(left);
-        elem.set(right);
-        for _ in 1..count {
-            left += 1;
-            elem.set(left);
-            right -= 1;
-            elem.set(right);
-        }
-    }
-}
-
-/// Moves the elements at indices `p` and `q` to the beginning and end of the slice so that
-/// `data[p] <= data[q]`. Then returns the pivots and the interior of the slice as a triple
-/// `low, mid, high`.
-fn read_pivots<T: Ord>(data: &mut [T], p: usize, q: usize) -> (&mut T, &mut [T], &mut T) {
-    debug_assert!(data.len() > 1);
-    debug_assert!(p != q);
-
-    sort_2(data, p, q);
-    data.swap(0, p);
-    data.swap(data.len() - 1, q);
-    let (head, tail) = data.split_at_mut(1);
-    let (mid, tail) = tail.split_at_mut(tail.len() - 1);
-    (&mut head[0], mid, &mut tail[0])
-}
-
 // Reorders the slice so that the element at `index` is at its sorted position. Returns the
 // indices of the first and last elements equal to the element at `index`.
-fn floyd_rivest<T: Ord, F>(
+fn floyd_rivest_select<T: Ord, F>(
     data: &mut [T],
     index: usize,
     is_less: F,
@@ -421,11 +338,11 @@ where
         } else if inner_index == inner.len() - 1 {
             break select_max(inner, is_less);
         } else if inner.len() < CUT {
-            break select_nth_small(inner, inner_index, is_less, rng);
-        } else if len / 3 < inner_index && inner_index < 2 * len / 3 {
+            break quickselect(inner, inner_index, is_less, rng);
+        } else if delta > 0 {
             let p = prepare_partition_2(inner, inner_index, is_less, rng);
             let sub = &mut inner[p..];
-            let u = partition_2_single_index(sub, 0, is_less);
+            let u = hoare_partition(sub, 0, is_less);
             match p + u {
                 u if inner_index < u => {
                     inner = &mut inner[..u];
@@ -437,16 +354,9 @@ where
                 }
             }
         } else {
-            let (p, q) = prepare_partition_3(inner, inner_index, is_less, rng);
-            let sub = &mut inner[p..=q];
-            let q = q - p;
-            let (u, v) = if delta == 0 {
-                partition_3_single_index(sub, 0, is_less)
-            } else if inner_index < len / 2 {
-                partition_3_dual_index_high(sub, 0, q, is_less)
-            } else {
-                partition_3_dual_index_low(sub, 0, q, is_less)
-            };
+            let p = prepare_partition_2(inner, inner_index, is_less, rng);
+            let sub = &mut inner[p..];
+            let (u, v) = lomuto_ternary_partition(sub, 0, is_less);
             match (p + u, p + v) {
                 (u, _v) if inner_index < u => {
                     inner = &mut inner[..u];
@@ -476,7 +386,7 @@ where
     (u + offset, v + offset)
 }
 
-fn select_nth_small<T, F>(
+fn quickselect<T, F>(
     data: &mut [T],
     index: usize,
     is_less: F,
@@ -501,7 +411,7 @@ where
                 }
                 sort_5(sample, 10, 11, 12, 13, 14);
                 if delta == 0 {
-                    match partition_3_single_index(d, 12, is_less) {
+                    match lomuto_ternary_partition(d, 12, is_less) {
                         (u, _v) if i < u => {
                             d = &mut d[..u];
                         }
@@ -513,7 +423,7 @@ where
                         }
                     }
                 } else {
-                    match partition_2_single_index(d, 12, is_less) {
+                    match hoare_partition(d, 12, is_less) {
                         u if i < u => {
                             d = &mut d[..u];
                         }
@@ -528,7 +438,7 @@ where
             }
             (_, 6..) => {
                 median_5(d, 0, 1, 2, 3, 4);
-                match partition_3_single_index(d, 2, is_less) {
+                match lomuto_ternary_partition(d, 2, is_less) {
                     (u, _v) if i < u => {
                         d = &mut d[..u];
                     }
@@ -562,121 +472,22 @@ where
     (u + offset, v + offset)
 }
 
-fn partition_2_single_index<T: Ord>(
-    data: &mut [T],
-    p: usize,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> usize {
+fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
     debug_assert!(!data.is_empty());
     data.swap(0, p);
     let (head, tail) = data.split_at_mut(1);
+    let (mut l, mut r) = (0, tail.len() - 1);
     let pivot = &mut head[0];
-    let u = partition_2_single_pivot(tail, pivot, is_less);
-    data.swap(0, u);
-    u
-}
-
-/// Partitions the slice into three parts using the element at index `p` as the pivot value. Returns
-/// the indices of the first and last elements of the middle part, i.e. the elements equal to the
-/// pivot.
-///
-/// The resulting partition is:
-/// ```text
-/// ┌─────────┬──────────┬─────────┐
-/// │ < pivot │ == pivot │ > pivot │
-/// └─────────┴──────────┴─────────┘
-///            u        v
-/// ```
-///
-/// Panics if the slice is empty or if `p` is out of bounds.
-fn partition_3_single_index<T: Ord>(
-    data: &mut [T],
-    p: usize,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
-    debug_assert!(!data.is_empty());
-    data.swap(0, p);
-    let (head, tail) = data.split_at_mut(1);
-    let pivot = &mut head[0];
-    let (u, v) = partition_3_single_pivot(tail, pivot, is_less);
-    data.swap(0, u);
-    (u, v)
-}
-
-/// Partitions the slice into three parts using the elements at indices `p` and `q` as the pivot
-/// values. Returns the indices of the first and last elements of the middle part, i.e. the elements
-/// that satisfy `low <= x <= high´, where `low` and `high` are the pivots.
-///
-/// The resulting partition is:
-/// ```text
-/// ┌─────────┬───────────────────┬─────────┐
-/// │ < low   │ low <= .. <= high │ > high  │
-/// └─────────┴───────────────────┴─────────┘
-///            u                 v
-/// ```
-///
-/// This variant of the algorithm tests the elements first against the lower pivot and conditionally
-/// against the higher pivot. If most elements are expected to be less than the lower pivot, this
-/// is faster than the high variant.
-///
-/// Panics if the slice has less than two elements, if `p` or `q` are out of bounds or if `p == q`.
-fn partition_3_dual_index_low<T: Ord>(
-    data: &mut [T],
-    p: usize,
-    q: usize,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
-    let (low, mid, high) = read_pivots(data, p, q);
-    let (u, v) = partition_3_dual_pivot_low(mid, low, high, is_less);
-    data.swap(0, u);
-    data.swap(v + 1, data.len() - 1);
-    (u, v + 1)
-}
-
-/// Partitions the slice into three parts using the elements at indices `p` and `q` as the pivot
-/// values. Returns the indices of the first and last elements of the middle part, i.e. the elements
-/// that satisfy `low <= x <= high´, where `low` and `high` are the pivots.
-///
-/// The resulting partition is:
-/// ```text
-/// ┌─────────┬───────────────────┬─────────┐
-/// │ < low   │ low <= .. <= high │ > high  │
-/// └─────────┴───────────────────┴─────────┘
-///            u                 v
-/// ```
-/// This variant of the algorithm tests the elements first against the higher pivot and
-/// conditionally against the lower pivot. If most elements are expected to be greater than
-/// the higher pivot, this is faster than the low variant.
-///
-/// Panics if the slice has less than two elements, if `p` or `q` are out of bounds or if `p == q`.
-fn partition_3_dual_index_high<T: Ord>(
-    data: &mut [T],
-    p: usize,
-    q: usize,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
-    let (low, mid, high) = read_pivots(data, p, q);
-    let (u, v) = partition_3_dual_pivot_high(mid, low, high, is_less);
-    data.swap(0, u);
-    data.swap(v + 1, data.len() - 1);
-    (u, v + 1)
-}
-
-fn partition_2_single_pivot<T: Ord>(
-    data: &mut [T],
-    pivot: &mut T,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> usize {
+    let u;
     unsafe {
-        let (mut l, mut r) = (0, data.len() - 1);
-        while l < r && is_less(pivot, data.get_unchecked(r)) {
+        while l < r && is_less(pivot, tail.get_unchecked(r)) {
             r -= 1;
         }
-        while l < r && is_less(data.get_unchecked(l), pivot) {
+        while l < r && is_less(tail.get_unchecked(l), pivot) {
             l += 1;
         }
 
-        let data = &mut data[l..=r];
+        let data = &mut tail[l..=r];
         let n = data.len();
         let mut tmp = Elem::new(data);
         let (mut i, mut j) = (0, n - 1);
@@ -762,25 +573,45 @@ fn partition_2_single_pivot<T: Ord>(
         while i < n && tmp.get(i) < pivot {
             i += 1;
         }
-        l + i
+        u = l + i;
     }
+    data.swap(0, u);
+    u
 }
 
-fn partition_3_single_pivot<T: Ord>(
+/// Partitions the slice into three parts using the element at index `p` as the pivot value. Returns
+/// the indices of the first and last elements of the middle part, i.e. the elements equal to the
+/// pivot.
+///
+/// The resulting partition is:
+/// ```text
+/// ┌─────────┬──────────┬─────────┐
+/// │ < pivot │ == pivot │ > pivot │
+/// └─────────┴──────────┴─────────┘
+///            u        v
+/// ```
+///
+/// Panics if the slice is empty or if `p` is out of bounds.
+fn lomuto_ternary_partition<T: Ord>(
     data: &mut [T],
-    pivot: &mut T,
+    p: usize,
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
+    debug_assert!(!data.is_empty());
+    data.swap(0, p);
+    let (head, tail) = data.split_at_mut(1);
+    let pivot = &mut head[0];
+    let (u, v);
     unsafe {
-        let (mut l, mut r) = (0, data.len() - 1);
-        while l < r && is_less(pivot, data.get_unchecked(r)) {
+        let (mut l, mut r) = (0, tail.len() - 1);
+        while l < r && is_less(pivot, tail.get_unchecked(r)) {
             r -= 1;
         }
-        while l < r && is_less(data.get_unchecked(l), pivot) {
+        while l < r && is_less(tail.get_unchecked(l), pivot) {
             l += 1;
         }
 
-        let data = &mut data[l..=r];
+        let data = &mut tail[l..=r];
         let n = data.len();
         let (mut i, mut j, mut k) = (0, 0, 0);
 
@@ -849,233 +680,8 @@ fn partition_3_single_pivot<T: Ord>(
             // yet and are unordered.
             // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
         }
-        (l + i, l + j)
+        (u, v) = (l + i, l + j)
     }
-}
-
-/// Partitions the slice into three parts, using `low` and `high` as pivots. Returns the indices
-/// of the first elements of the second and third parts of the partition a tuple `(u, v)`.
-///
-/// The resulting partition is:
-/// ```text
-/// ┌───────┬───────────────────┬────────┐
-/// │ < low │ low <= .. <= high │ > high │
-/// └───────┴───────────────────┴────────┘
-///          u                   v
-/// ```
-///
-/// This variant of the algorithm tests the elements first against the lower pivot and conditionally
-/// against the higher pivot. If most elements are expected to be less than the lower pivot, this
-/// is faster than the high variant.
-///
-/// Panics if the indices are out of bounds or if `low > high`.
-fn partition_3_dual_pivot_low<T: Ord>(
-    data: &mut [T],
-    low: &mut T,
-    high: &mut T,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
-    assert!(low <= high);
-    unsafe {
-        let (mut l, mut r) = (0, data.len() - 1);
-        while l < r && is_less(high, data.get_unchecked(r)) {
-            r -= 1;
-        }
-        while l < r && is_less(data.get_unchecked(l), low) {
-            l += 1;
-        }
-
-        let data = &mut data[l..=r];
-        let n = data.len();
-        let (mut i, mut j, mut k) = (n, n, n);
-
-        let low = Elem::from_mut(low);
-        let high = Elem::from_mut(high);
-        let mut tmp = Elem::new(data);
-        let mut offsets = Block::new();
-        let mut num_gt_high: u8 = 0;
-        let mut num_ge_low: u8 = 0;
-        let mut h: u8 = 1;
-
-        while k > 0 {
-            let size = k.min(BLOCK) as u8;
-            //     | block |
-            // ┌───────────┬───────┬────────────────────┬────────┐
-            // │  ? .. ?   │ low < │ low <= ... <= high │ > high │
-            // └───────────┴───────┴────────────────────┴────────┘
-            //            k k+1     i                    j
-
-            // Scan the block ending at k and store the offsets to elements >= low.
-            while h <= size {
-                offsets.write(num_ge_low, h);
-                let elem = tmp.get(k - h as usize);
-                num_ge_low += !is_less(elem, low.element()) as u8;
-                h += 1;
-            }
-            h = 0;
-
-            // Swap each element >= low with the last element < low and store the offsets to
-            // elements > high.
-            while h < num_ge_low {
-                let m = k - offsets.get(h);
-                tmp.select(m);
-                offsets.write(num_gt_high, h);
-                num_gt_high += is_less(high.element(), tmp.element()) as u8;
-                tmp.swap(i - 1 - h as usize);
-                h += 1;
-            }
-            h = 0;
-
-            // Swap each element > high with the last element <= high.
-            while h < num_gt_high {
-                let m = i - 1 - offsets.get(h);
-                tmp.select(m);
-                tmp.swap(j - 1 - h as usize);
-                h += 1;
-            }
-            h = 1;
-
-            // Increment the indices
-            k -= size as usize;
-            i -= num_ge_low as usize;
-            j -= num_gt_high as usize;
-
-            // Reset the counters
-            (num_gt_high, num_ge_low) = (0, 0);
-
-            // The first part contains elements x < low. The elements before k + 1 are unprocessed.
-            // debug_assert!({
-            //     if let Some(first) = data.get(k + 1..i) {
-            //         first.iter().all(|x| is_less(x, low))
-            //     } else {
-            //         true
-            //     }
-            // });
-
-            // The middle part contains elements low <= x <= high.
-            // debug_assert!(if let Some(middle) = data.get(i..j) {
-            //     middle.iter().all(|x| !is_less(x, low) && !is_less(high, x))
-            // } else {
-            //     true
-            // });
-
-            // The last part contains elements x > high.
-            // debug_assert!(if let Some(last) = data.get(j..) {
-            //     last.iter().all(|x| is_less(high, x))
-            // } else {
-            //     true
-            // });
-        }
-        (l + i, l + j)
-    }
-}
-
-/// Partitions the slice into three parts, using the `low` and `high` as pivots. Returns the indices
-/// of the first elements of the second and third parts of the partition a tuple `(u, v)`.
-///
-/// The resulting partition is:
-/// ```text
-/// ┌───────┬───────────────────┬────────┐
-/// │ < low │ low <= .. <= high │ > high │
-/// └───────┴───────────────────┴────────┘
-///          u                   v
-/// ```
-///
-/// This variant of the algorithm tests the elements first against the higher pivot and
-/// conditionally against the lower pivot. If most elements are expected to be greater than
-/// the higher pivot, this is faster than the low variant.
-///
-/// Panics if the indices are out of bounds or if `low > high`.
-fn partition_3_dual_pivot_high<T: Ord>(
-    data: &mut [T],
-    low: &mut T,
-    high: &mut T,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
-    assert!(low <= high);
-
-    unsafe {
-        let (mut l, mut r) = (0, data.len() - 1);
-        while l < r && is_less(high, data.get_unchecked(r)) {
-            r -= 1;
-        }
-        while l < r && is_less(data.get_unchecked(l), low) {
-            l += 1;
-        }
-
-        let data = &mut data[l..=r];
-        let n = data.len();
-        let (mut i, mut j, mut k) = (0, 0, 0);
-
-        let low = Elem::from_mut(low);
-        let high = Elem::from_mut(high);
-        let mut tmp = Elem::new(data);
-
-        let mut offsets = Block::new();
-        let mut num_lt_low = 0;
-        let mut num_le_high = 0;
-        let mut h: u8 = 0;
-
-        while k < n {
-            let size = (n - k).min(BLOCK) as u8;
-
-            //                                       | block |
-            // ┌───────┬────────────────────┬────────┬─────────────┐
-            // │ < low │ low <= ... <= high │ > high │   ? .. ?    │
-            // └───────┴────────────────────┴────────┴─────────────┘
-            //          i                    j        k
-
-            // Scan the block beginning at k and store the offsets to elements <= high.
-            while h < size {
-                offsets.write(num_le_high, h);
-                let elem = tmp.get(k + h as usize);
-                num_le_high += !is_less(high.element(), elem) as u8;
-                h += 1;
-            }
-            h = 0;
-
-            // Swap each element <= high with the first element > high and store the offsets to
-            // elements < low.
-
-            while h < num_le_high {
-                let m = k + offsets.get(h);
-                tmp.select(m);
-
-                offsets.write(num_lt_low, h);
-                num_lt_low += is_less(tmp.element(), low.element()) as u8;
-                tmp.swap(j + h as usize);
-                h += 1;
-            }
-            h = 0;
-
-            // Swap each element < low with the first element >= low.
-            while h < num_lt_low {
-                let m = j + offsets.get(h);
-                tmp.select(m);
-                tmp.swap(i + h as usize);
-                h += 1;
-            }
-            h = 0;
-
-            // Increment the indices
-            k += size as usize;
-            j += num_le_high as usize;
-            i += num_lt_low as usize;
-
-            // Reset the counters
-            (num_lt_low, num_le_high) = (0, 0);
-
-            // The first part contains elements x < low.
-            // debug_assert!(data[..i].iter().all(|x| is_less(x, low.element())));
-
-            // The middle part contains elements low <= x <= high.
-            // debug_assert!(data[i..j].iter().all(|x| !is_less(x, low.element())));
-            // debug_assert!(data[i..j].iter().all(|x| !is_less(high.element(), x)));
-
-            // The last part contains elements x > high. Elements after k have not been scanned
-            // yet and are unordered.
-            // debug_assert!(data[j..k].iter().all(|x| is_less(high.element(), x)));
-        }
-        (l + i, l + j)
-    }
+    data.swap(0, u);
+    (u, v)
 }
