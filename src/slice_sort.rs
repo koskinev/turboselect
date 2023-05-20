@@ -66,7 +66,10 @@ where
             // If `is_less` panics at any point during the process, `hole` will get dropped and
             // fill the hole in `v` with `tmp`, thus ensuring that `v` still holds every object it
             // initially held exactly once.
-            let mut hole = InsertionHole { src: &*tmp, dest: i_ptr.sub(1) };
+            let mut hole = InsertionHole {
+                src: &*tmp,
+                dest: i_ptr.sub(1),
+            };
             ptr::copy_nonoverlapping(hole.dest, i_ptr, 1);
 
             // SAFETY: We know i is at least 1.
@@ -127,7 +130,10 @@ where
             // If `is_less` panics at any point during the process, `hole` will get dropped and
             // fill the hole in `v` with `tmp`, thus ensuring that `v` still holds every object it
             // initially held exactly once.
-            let mut hole = InsertionHole { src: &*tmp, dest: arr_ptr.add(1) };
+            let mut hole = InsertionHole {
+                src: &*tmp,
+                dest: arr_ptr.add(1),
+            };
             ptr::copy_nonoverlapping(arr_ptr.add(1), arr_ptr.add(0), 1);
 
             for i in 2..v.len() {
@@ -328,7 +334,8 @@ where
     let mut offsets_l = [MaybeUninit::<u8>::uninit(); BLOCK];
 
     // The current block on the right side (from `r.sub(block_r)` to `r`).
-    // SAFETY: The documentation for .add() specifically mention that `vec.as_ptr().add(vec.len())` is always safe
+    // SAFETY: The documentation for .add() specifically mention that `vec.as_ptr().add(vec.len())`
+    // is always safe
     let mut r = unsafe { l.add(v.len()) };
     let mut block_r = BLOCK;
     let mut start_r = ptr::null_mut();
@@ -366,8 +373,8 @@ where
                 block_l = rem;
             } else {
                 // There were the same number of elements to switch on both blocks during the last
-                // iteration, so there are no remaining elements on either block. Cover the remaining
-                // items with roughly equally-sized blocks.
+                // iteration, so there are no remaining elements on either block. Cover the
+                // remaining items with roughly equally-sized blocks.
                 block_l = rem / 2;
                 block_r = rem - block_l;
             }
@@ -383,15 +390,18 @@ where
 
             for i in 0..block_l {
                 // SAFETY: The unsafety operations below involve the usage of the `offset`.
-                //         According to the conditions required by the function, we satisfy them because:
-                //         1. `offsets_l` is stack-allocated, and thus considered separate allocated object.
-                //         2. The function `is_less` returns a `bool`.
-                //            Casting a `bool` will never overflow `isize`.
-                //         3. We have guaranteed that `block_l` will be `<= BLOCK`.
-                //            Plus, `end_l` was initially set to the begin pointer of `offsets_` which was declared on the stack.
-                //            Thus, we know that even in the worst case (all invocations of `is_less` returns false) we will only be at most 1 byte pass the end.
+                //         According to the conditions required by the function, we satisfy them
+                // because:         1. `offsets_l` is stack-allocated, and thus
+                // considered separate allocated object.         2. The function
+                // `is_less` returns a `bool`.            Casting a `bool` will
+                // never overflow `isize`.         3. We have guaranteed that
+                // `block_l` will be `<= BLOCK`.            Plus, `end_l` was
+                // initially set to the begin pointer of `offsets_` which was declared on the stack.
+                //            Thus, we know that even in the worst case (all invocations of
+                // `is_less` returns false) we will only be at most 1 byte pass the end.
                 //        Another unsafety operation here is dereferencing `elem`.
-                //        However, `elem` was initially the begin pointer to the slice which is always valid.
+                //        However, `elem` was initially the begin pointer to the slice which is
+                // always valid.
                 unsafe {
                     // Branchless comparison.
                     *end_l = i as u8;
@@ -409,16 +419,20 @@ where
 
             for i in 0..block_r {
                 // SAFETY: The unsafety operations below involve the usage of the `offset`.
-                //         According to the conditions required by the function, we satisfy them because:
-                //         1. `offsets_r` is stack-allocated, and thus considered separate allocated object.
-                //         2. The function `is_less` returns a `bool`.
-                //            Casting a `bool` will never overflow `isize`.
-                //         3. We have guaranteed that `block_r` will be `<= BLOCK`.
-                //            Plus, `end_r` was initially set to the begin pointer of `offsets_` which was declared on the stack.
-                //            Thus, we know that even in the worst case (all invocations of `is_less` returns true) we will only be at most 1 byte pass the end.
+                //         According to the conditions required by the function, we satisfy them
+                // because:         1. `offsets_r` is stack-allocated, and thus
+                // considered separate allocated object.         2. The function
+                // `is_less` returns a `bool`.            Casting a `bool` will
+                // never overflow `isize`.         3. We have guaranteed that
+                // `block_r` will be `<= BLOCK`.            Plus, `end_r` was
+                // initially set to the begin pointer of `offsets_` which was declared on the stack.
+                //            Thus, we know that even in the worst case (all invocations of
+                // `is_less` returns true) we will only be at most 1 byte pass the end.
                 //        Another unsafety operation here is dereferencing `elem`.
-                //        However, `elem` was initially `1 * sizeof(T)` past the end and we decrement it by `1 * sizeof(T)` before accessing it.
-                //        Plus, `block_r` was asserted to be less than `BLOCK` and `elem` will therefore at most be pointing to the beginning of the slice.
+                //        However, `elem` was initially `1 * sizeof(T)` past the end and we
+                // decrement it by `1 * sizeof(T)` before accessing it.        Plus,
+                // `block_r` was asserted to be less than `BLOCK` and `elem` will therefore at most
+                // be pointing to the beginning of the slice.
                 unsafe {
                     // Branchless comparison.
                     elem = elem.sub(1);
@@ -456,12 +470,13 @@ where
             // applies for the uses of `right!`.
             //
             // The calls to `start_l.offset` are valid because there are at most `count-1` of them,
-            // plus the final one at the end of the unsafe block, where `count` is the minimum number
-            // of collected offsets in `offsets_l` and `offsets_r`, so there is no risk of there not
-            // being enough elements. The same reasoning applies to the calls to `start_r.offset`.
+            // plus the final one at the end of the unsafe block, where `count` is the minimum
+            // number of collected offsets in `offsets_l` and `offsets_r`, so there is
+            // no risk of there not being enough elements. The same reasoning applies to
+            // the calls to `start_r.offset`.
             //
-            // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are guaranteed
-            // not to overlap, and are valid because of the reasoning above.
+            // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
+            // guaranteed not to overlap, and are valid because of the reasoning above.
             unsafe {
                 let tmp = ptr::read(left!());
                 ptr::copy_nonoverlapping(right!(), left!(), 1);
@@ -484,10 +499,11 @@ where
             // All out-of-order elements in the left block were moved. Move to the next block.
 
             // block-width-guarantee
-            // SAFETY: if `!is_done` then the slice width is guaranteed to be at least `2*BLOCK` wide. There
-            // are at most `BLOCK` elements in `offsets_l` because of its size, so the `offset` operation is
-            // safe. Otherwise, the debug assertions in the `is_done` case guarantee that
-            // `width(l, r) == block_l + block_r`, namely, that the block sizes have been adjusted to account
+            // SAFETY: if `!is_done` then the slice width is guaranteed to be at least `2*BLOCK`
+            // wide. There are at most `BLOCK` elements in `offsets_l` because of its
+            // size, so the `offset` operation is safe. Otherwise, the debug assertions
+            // in the `is_done` case guarantee that `width(l, r) == block_l + block_r`,
+            // namely, that the block sizes have been adjusted to account
             // for the smaller number of remaining elements.
             l = unsafe { l.add(block_l) };
         }
@@ -495,8 +511,9 @@ where
         if start_r == end_r {
             // All out-of-order elements in the right block were moved. Move to the previous block.
 
-            // SAFETY: Same argument as [block-width-guarantee]. Either this is a full block `2*BLOCK`-wide,
-            // or `block_r` has been adjusted for the last handful of elements.
+            // SAFETY: Same argument as [block-width-guarantee]. Either this is a full block
+            // `2*BLOCK`-wide, or `block_r` has been adjusted for the last handful of
+            // elements.
             r = unsafe { r.sub(block_r) };
         }
 
@@ -573,7 +590,10 @@ where
 
         // SAFETY: `pivot` is a reference to the first element of `v`, so `ptr::read` is safe.
         let tmp = mem::ManuallyDrop::new(unsafe { ptr::read(pivot) });
-        let _pivot_guard = InsertionHole { src: &*tmp, dest: pivot };
+        let _pivot_guard = InsertionHole {
+            src: &*tmp,
+            dest: pivot,
+        };
         let pivot = &*tmp;
 
         // Find the first pair of out-of-order elements.
@@ -582,8 +602,9 @@ where
 
         // SAFETY: The unsafety below involves indexing an array.
         // For the first one: We already do the bounds checking here with `l < r`.
-        // For the second one: We initially have `l == 0` and `r == v.len()` and we checked that `l < r` at every indexing operation.
-        //                     From here we know that `r` must be at least `r == l` which was shown to be valid from the first one.
+        // For the second one: We initially have `l == 0` and `r == v.len()` and we checked that `l
+        // < r` at every indexing operation.                     From here we know that `r`
+        // must be at least `r == l` which was shown to be valid from the first one.
         unsafe {
             // Find the first element greater than or equal to the pivot.
             while l < r && is_less(v.get_unchecked(l), pivot) {
@@ -596,7 +617,10 @@ where
             }
         }
 
-        (l + partition_in_blocks(&mut v[l..r], pivot, is_less), l >= r)
+        (
+            l + partition_in_blocks(&mut v[l..r], pivot, is_less),
+            l >= r,
+        )
 
         // `_pivot_guard` goes out of scope and writes the pivot (which is a stack-allocated
         // variable) back into the slice where it originally was. This step is critical in ensuring
@@ -626,7 +650,10 @@ where
     // operation panics, the pivot will be automatically written back into the slice.
     // SAFETY: The pointer here is valid because it is obtained from a reference to a slice.
     let tmp = mem::ManuallyDrop::new(unsafe { ptr::read(pivot) });
-    let _pivot_guard = InsertionHole { src: &*tmp, dest: pivot };
+    let _pivot_guard = InsertionHole {
+        src: &*tmp,
+        dest: pivot,
+    };
     let pivot = &*tmp;
 
     // Now partition the slice.
@@ -635,8 +662,9 @@ where
     loop {
         // SAFETY: The unsafety below involves indexing an array.
         // For the first one: We already do the bounds checking here with `l < r`.
-        // For the second one: We initially have `l == 0` and `r == v.len()` and we checked that `l < r` at every indexing operation.
-        //                     From here we know that `r` must be at least `r == l` which was shown to be valid from the first one.
+        // For the second one: We initially have `l == 0` and `r == v.len()` and we checked that `l
+        // < r` at every indexing operation.                     From here we know that `r`
+        // must be at least `r == l` which was shown to be valid from the first one.
         unsafe {
             // Find the first element greater than the pivot.
             while l < r && !is_less(pivot, v.get_unchecked(l)) {
@@ -906,9 +934,9 @@ fn partition_at_index_loop<'a, T, F>(
 ) where
     F: FnMut(&T, &T) -> bool,
 {
-    // Limit the amount of iterations and fall back to heapsort, similarly to `slice::sort_unstable`.
-    // This lowers the worst case running time from O(n^2) to O(n log n).
-    // FIXME: Investigate whether it would be better to use something like Median of Medians
+    // Limit the amount of iterations and fall back to heapsort, similarly to
+    // `slice::sort_unstable`. This lowers the worst case running time from O(n^2) to O(n log
+    // n). FIXME: Investigate whether it would be better to use something like Median of Medians
     // or Fast Deterministic Selection to guarantee O(n) worst case.
     let mut limit = usize::BITS - v.len().leading_zeros();
 
@@ -997,7 +1025,11 @@ where
     use cmp::Ordering::Less;
 
     if index >= v.len() {
-        panic!("partition_at_index index {} greater than length of slice {}", index, v.len());
+        panic!(
+            "partition_at_index index {} greater than length of slice {}",
+            index,
+            v.len()
+        );
     }
 
     if T::IS_ZST {
@@ -1072,7 +1104,11 @@ where
         // SAFETY: buf must have enough capacity for `v[..mid]`.
         unsafe {
             ptr::copy_nonoverlapping(v, buf, mid);
-            hole = MergeHole { start: buf, end: buf.add(mid), dest: v };
+            hole = MergeHole {
+                start: buf,
+                end: buf.add(mid),
+                dest: v,
+            };
         }
 
         // Initially, these pointers point to the beginnings of their arrays.
@@ -1100,7 +1136,11 @@ where
         // SAFETY: buf must have enough capacity for `v[mid..]`.
         unsafe {
             ptr::copy_nonoverlapping(v_mid, buf, len - mid);
-            hole = MergeHole { start: buf, end: buf.add(len - mid), dest: v_mid };
+            hole = MergeHole {
+                start: buf,
+                end: buf.add(len - mid),
+                dest: v_mid,
+            };
         }
 
         // Initially, these pointers point past the ends of their arrays.
@@ -1228,7 +1268,10 @@ pub fn merge_sort<T, CmpF, ElemAllocF, ElemDeallocF, RunAllocF, RunDeallocF>(
         end = provide_sorted_batch(v, start, end, is_less);
 
         // Push this run onto the stack.
-        runs.push(TimSortRun { start, len: end - start });
+        runs.push(TimSortRun {
+            start,
+            len: end - start,
+        });
         start = end;
 
         // Merge some pairs of adjacent runs to satisfy the invariants.
@@ -1241,7 +1284,10 @@ pub fn merge_sort<T, CmpF, ElemAllocF, ElemDeallocF, RunAllocF, RunDeallocF>(
             unsafe {
                 merge(merge_slice, left.len, buf_ptr, is_less);
             }
-            runs[r + 1] = TimSortRun { start: left.start, len: left.len + right.len };
+            runs[r + 1] = TimSortRun {
+                start: left.start,
+                len: left.len + right.len,
+            };
             runs.remove(r);
         }
     }
@@ -1272,7 +1318,11 @@ pub fn merge_sort<T, CmpF, ElemAllocF, ElemDeallocF, RunAllocF, RunDeallocF>(
                 || (n >= 3 && runs[n - 3].len <= runs[n - 2].len + runs[n - 1].len)
                 || (n >= 4 && runs[n - 4].len <= runs[n - 3].len + runs[n - 2].len))
         {
-            if n >= 3 && runs[n - 3].len < runs[n - 1].len { Some(n - 3) } else { Some(n - 2) }
+            if n >= 3 && runs[n - 3].len < runs[n - 1].len {
+                Some(n - 3)
+            } else {
+                Some(n - 2)
+            }
         } else {
             None
         }
