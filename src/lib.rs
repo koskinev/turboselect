@@ -547,10 +547,10 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
     j -= (start_lt as usize) * (num_lt > 0) as usize;
     unsafe {
         loop {
-            while i < j && tmp.get(i) < pivot.element() {
+            while i < j && is_less(tmp.get(i), pivot.element()) {
                 i += 1;
             }
-            while i < j && tmp.get(j) >= pivot.element() {
+            while i < j && !is_less(tmp.get(j), pivot.element()) {
                 j -= 1;
             }
             if i < j {
@@ -562,7 +562,7 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
                 break;
             }
         }
-        while i < n && tmp.get(i) < pivot.element() {
+        while i < n && is_less(tmp.get(i), pivot.element()) {
             i += 1;
         }
     }
@@ -571,36 +571,245 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
     i
 }
 
+/// Partitions the slice into three parts using the elements at indices `p` and `q` as the pivot
+/// values. Returns the indices of the first and last elements of between or equal to the pivot
+/// values.
+///
+/// Using `(u, v)` to denote the indices returned by the function, the slice is partitioned as
+/// follows:
+/// ```text
+/// ┌───────────┬──────────────────────────┬───────────┐
+/// │ < data[u] │ data[u] <= .. <= data[v] │ > data[v] │
+/// └───────────┴──────────────────────────┴───────────┘
+///              u                        v
+/// ```
+///
+/// Panics if `p` or `q` are out of bounds.
+fn hoare_ternary_partition<T: Ord>(
+    data: &mut [T],
+    p: usize,
+    q: usize,
+    is_less: impl Fn(&T, &T) -> bool,
+) -> (usize, usize) {
+    assert!(p < data.len() && q < data.len());
+    sort_2(data, p, q);
+    data.swap(0, p);
+    data.swap(q, data.len() - 1);
+
+    // Copy the pivots to the stack.
+    let ptr = unsafe { data.get_unchecked_mut(0) } as *mut T;
+    let mut low = Elem::new(ptr);
+    let mut high = Elem::new(ptr);
+    unsafe {
+        low.select(0);
+        high.select(data.len() - 1);
+    }
+
+    let (_, tail) = data.split_first_mut().unwrap();
+    let (_, middle) = tail.split_last_mut().unwrap();
+
+    // Find the first pair of elements that are out of order.
+    let (mut l, mut r) = (0, middle.len() - 1);
+    unsafe {
+        while l < r && is_less(middle.get_unchecked(l), low.element()) {
+            l += 1;
+        }
+        while l < r && is_less(high.element(), middle.get_unchecked(r)) {
+            r -= 1;
+        }
+    }
+
+    let n = middle.len();
+    let (mut i, mut j, mut p, mut q) = (l, r, 0, n - 1);
+    let mut tmp = Elem::new(middle.as_mut_ptr());
+
+    let mut h: u8;
+
+    // The block lenghts
+    let mut n_lr: u8 = 0;
+    let mut n_rm: u8 = 0;
+    let mut n_lm: u8 = 0;
+    let mut n_rl: u8 = 0;
+
+    // The indices of first unprocessed element in each block.
+    let mut s_lr: u8 = 0;
+    let mut s_rl: u8 = 0;
+
+    // The offset blocks.
+    let mut offsets_lr = Block::new();
+    let mut offsets_rm = Block::new();
+    let mut offsets_lm = Block::new();
+    let mut offsets_rl = Block::new();
+
+    while j - i + 1 > 2 * BLOCK {
+        if n_lr == 0 {
+            s_lr = 0;
+            h = 0;
+            // Collect the offsets to elements >= low
+            while h < BLOCK as u8 {
+                unsafe {
+                    offsets_lr.write(n_lr, h);
+                    let elem = tmp.get(i + h as usize);
+                    n_lr += !is_less(elem, low.element()) as u8;
+                }
+                h += 1;
+            }
+        }
+        if n_rl == 0 {
+            s_rl = 0;
+            h = 0;
+            // Collect the offsets to elements <= high
+            while h < BLOCK as u8 {
+                unsafe {
+                    offsets_rl.write(n_rl, h);
+                    let elem = tmp.get(j - h as usize);
+                    n_rl += !is_less(high.element(), elem) as u8;
+                }
+                h += 1;
+            }
+        }
+
+        // We use the beginning and the end of the slice as a temporary store for the elements
+        // that belong to the middle:
+        //  ┌─────────────────┬───────┬─────┬────────┬──────────────────┐
+        //  │low <= .. < high │ < low │  ?  │ > high │ low < .. <= high │
+        //  └─────────────────┴───────┴─────┴────────┴──────────────────┘
+        //   0                 p       i   j        q                    n
+
+        let num = n_lr.min(n_rl);
+        if num > 0 {
+            // Swap the out-of-order pairs and store the indices of the elements that belong to
+            // the middle.
+            h = 0;
+            while h < num {
+                unsafe {
+                    let f = offsets_lr.get(s_lr + h);
+                    let g = offsets_rl.get(s_rl + h);
+
+                    let m = i + f;
+                    let n = j - g;
+
+                    offsets_rm.write(n_rm, g as u8);
+                    offsets_lm.write(n_lm, f as u8);
+
+                    tmp.select(m);
+                    n_rm += is_less(tmp.element(), high.element()) as u8;
+                    tmp.swap(n);
+                    n_lm += is_less(low.element(), tmp.get(m)) as u8;
+                }
+                h += 1;
+            }
+
+            // Move the elements in left that should be in the middle to the temporary part
+            // in the beginning of the slice.
+            h = 0;
+            while h < n_lm {
+                unsafe {
+                    let m = i + offsets_lm.get(h);
+                    tmp.select(m);
+                    tmp.swap(p);
+                    p += 1;
+                }
+                h += 1;
+            }
+            n_lm = 0;
+
+            // Move the elements in right that should be in the middle to the temporary part
+            // in the end of the slice.
+            h = 0;
+            while h < n_rm {
+                unsafe {
+                    let m = j - offsets_rm.get(h);
+                    tmp.select(m);
+                    tmp.swap(q);
+                    q -= 1;
+                }
+                h += 1;
+            }
+            n_rm = 0;
+
+            n_lr -= num;
+            n_rl -= num;
+            s_lr += num;
+            s_rl += num;
+        }
+
+        i += BLOCK * (n_lr == 0) as usize;
+        j -= BLOCK * (n_rl == 0) as usize;
+    }
+
     // Process the remaining elements
-    i += (start_ge as usize) * (num_ge > 0) as usize;
-    j -= (start_lt as usize) * (num_lt > 0) as usize;
+    i += (s_lr as usize) * (n_lr > 0) as usize;
+    j -= (s_rl as usize) * (n_rl > 0) as usize;
     unsafe {
         loop {
-            while i < j && tmp.get(i) < head {
+            while i < j && is_less(tmp.get(i), low.element()) {
                 i += 1;
             }
-            while i < j && tmp.get(j) >= head {
+            while i < j && is_less(high.element(), tmp.get(j)) {
                 j -= 1;
             }
             if i < j {
                 tmp.select(i);
                 tmp.swap(j);
+                if !is_less(tmp.get(i), low.element()) {
+                    tmp.select(i);
+                    tmp.swap(p);
+                    p += 1;
+                }
+                if !is_less(high.element(), tmp.get(j)) {
+                    tmp.select(j);
+                    tmp.swap(q);
+                    q -= 1;
+                }
                 i += 1;
                 j -= 1;
             } else {
                 break;
             }
         }
-        while i < n && tmp.get(i) < head {
+        while i < n && is_less(tmp.get(i), low.element()) {
             i += 1;
+        }
+        while j > 0 && is_less(high.element(), tmp.get(j)) {
+            j -= 1;
+        }
+        if i == j {
+            tmp.select(i);
+            if !is_less(tmp.element(), low.element()) && !is_less(high.element(), tmp.element()) {
+                tmp.swap(p);
+                p += 1;
+                i += 1;
+            }
         }
     }
 
-    let u = l + i;
+    //  Move the temporary parts to the middle:
+    //  ┌─────────────────┬───────┬────────┬──────────────────┐
+    //  │low <= .. < high │ < low │ > high │ low < .. <= high │
+    //  └─────────────────┴───────┴────────┴──────────────────┘
+    //   0                 p     j i      q                    n
+
+    let s_lm = p.min(i - p);
+    let s_rm = (n - q - 1).min(q + 1 - i);
+
+    let (left, right) = middle.split_at_mut(i);
+
+    let (left_a, tail) = left.split_at_mut(s_lm);
+    let (_, left_b) = tail.split_at_mut(tail.len() - s_lm);
+    left_a.swap_with_slice(left_b);
+
+    let (right_a, tail) = right.split_at_mut(s_rm);
+    let (_, right_b) = tail.split_at_mut(tail.len() - s_rm);
+    right_a.swap_with_slice(right_b);
+
+    let u = i - p;
+    let v = i + n - q;
     unsafe {
-        pivot.set(u);
+        low.set(u);
+        high.set(v);
     }
-    u
+    (u, v)
 }
 
 /// Partitions the slice into three parts using the element at index `p` as the pivot. Returns

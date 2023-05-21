@@ -1,6 +1,7 @@
 use crate::{
-    floyd_rivest_select, median_5, hoare_partition, lomuto_ternary_partition, pcg_rng::PCGRng,
-    sample, select_min, quickselect, select_nth_unstable, sort_3, sort_4,
+    floyd_rivest_select, hoare_partition, hoare_ternary_partition, lomuto_ternary_partition,
+    median_5, pcg_rng::PCGRng, quickselect, sample, select_min, select_nth_unstable, sort_3,
+    sort_4,
 };
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -16,8 +17,7 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
 }
 
 #[test]
-fn hoare_2_single_index() {
-
+fn hoare_2() {
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -40,8 +40,28 @@ fn hoare_2_single_index() {
 }
 
 #[test]
-fn lomuto_3_single_index() {
-    
+fn hoare_3() {
+    let repeat = 1000;
+    let count = 300;
+    let mut rng = PCGRng::new(123);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = (0..count).collect();
+        shuffle(data.as_mut_slice(), rng.as_mut());
+
+        let (p, q) = (count / 3, 2 * count / 3);
+
+        let (u, v) = hoare_ternary_partition(data.as_mut_slice(), p, q, usize::lt);
+        let (low, high) = (&data[u], &data[v]);
+
+        assert!(data[..u].iter().all(|elem| elem < low));
+        assert!(data[u..=v].iter().all(|elem| low <= elem && elem <= high));
+        assert!(data[v + 1..].iter().all(|elem| elem > high));
+    }
+}
+
+#[test]
+fn lomuto_3() {
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -66,7 +86,6 @@ fn lomuto_3_single_index() {
 
 #[test]
 fn floyd_rivest_300() {
-    
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -97,7 +116,7 @@ fn large_median() {
     let count = 10_000_000;
     #[cfg(miri)]
     let count = 1000;
-    
+
     let mid = count / 2;
 
     let mut data: Vec<usize> = (0..count).collect();
@@ -108,7 +127,6 @@ fn large_median() {
 
 #[test]
 fn nth() {
-    
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -139,12 +157,11 @@ fn nth() {
 
 #[test]
 fn nth_small() {
-
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
     let repeat = 1;
-    
+
     let max = 1000;
     let mut pcg = PCGRng::new(123);
     let is_less = |a: &usize, b: &usize| a < b;
@@ -181,7 +198,7 @@ fn sample_10() {
 fn min_10() {
     let len = 10;
     let mut rng = PCGRng::new(0);
-    
+
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -199,7 +216,6 @@ fn min_10() {
 
 #[test]
 fn sort3() {
-
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -218,7 +234,6 @@ fn sort3() {
 
 #[test]
 fn sort4() {
-    
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -238,7 +253,6 @@ fn sort4() {
 
 #[test]
 fn median5() {
-    
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
