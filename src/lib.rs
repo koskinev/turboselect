@@ -371,11 +371,11 @@ where
         let len = data.len();
         // When selecting the minimum or maximum, partioning is not necessary
         if index == 0 {
-            (u, v) = select_min(data, &is_less);
+            (u, v) = select_min(data, is_less);
             break;
         }
         if index == data.len() - 1 {
-            (u, v) = select_max(data, &is_less);
+            (u, v) = select_max(data, is_less);
             break;
         }
         // When the slice is small enough, use quickselect
