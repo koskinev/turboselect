@@ -124,7 +124,26 @@ fn large_median() {
     let median = select_nth_unstable(data.as_mut_slice(), mid);
     assert_eq!(median, &mid);
     assert!(data[..mid].iter().all(|elem| elem < &mid));
-    assert!(data[mid+1..].iter().all(|elem| elem > &mid));
+    assert!(data[mid + 1..].iter().all(|elem| elem > &mid));
+}
+
+#[test]
+fn small_index() {
+    let mut pcg = PCGRng::new(123);
+
+    #[cfg(not(miri))]
+    let count = 10_000_000;
+    #[cfg(miri)]
+    let count = 1000;
+
+    let index = 42;
+
+    let mut data: Vec<usize> = (0..count).collect();
+    shuffle(data.as_mut_slice(), &mut pcg);
+    let nth = *select_nth_unstable(data.as_mut_slice(), index);
+    assert!(data[..index].iter().all(|elem| elem < &nth));
+    assert_eq!(data[index], nth);
+    assert!(data[index + 1..].iter().all(|elem| elem > &nth));
 }
 
 #[test]

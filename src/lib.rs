@@ -1,7 +1,7 @@
 mod pcg_rng;
 use core::{
     mem::{ManuallyDrop, MaybeUninit},
-    ptr, slice,
+    ptr,
 };
 use pcg_rng::PCGRng;
 
@@ -11,7 +11,7 @@ mod tests;
 const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
 const BLOCK: usize = 128;
-const CUT: usize = 1000;
+const CUT: usize = 2000;
 
 struct Block {
     offsets: [MaybeUninit<u8>; BLOCK],
@@ -90,6 +90,7 @@ impl<T> Elem<T> {
         self.tmp.write(ptr::read(src));
     }
 
+    #[inline]
     /// Sets the position of the current element to `index`. This also moves the position of the
     /// element at `index` to the previous position of the current element.
     ///
@@ -101,6 +102,7 @@ impl<T> Elem<T> {
         self.ptr = Some(src);
     }
 
+    #[inline]
     /// Swaps the current element with the element at `index`. Unsafe because index must be in
     /// bounds and the current element must be selected.
     unsafe fn swap(&mut self, index: usize) {
@@ -381,7 +383,7 @@ where
         } else if delta > 0 {
             let (p, q) = prepare_partition_3(inner, inner_index, is_less, rng);
             let sub = &mut inner[p..=q];
-            let (u, v) = hoare_ternary_partition(sub, 0, q-p, is_less);
+            let (u, v) = hoare_ternary_partition(sub, 0, q - p, is_less);
             match (p + u, p + v) {
                 (u, _v) if inner_index < u => {
                     inner = &mut inner[..u];
@@ -699,8 +701,6 @@ fn hoare_ternary_partition<T: Ord>(
 
     // The block lenghts
     let mut n_lr: u8 = 0;
-    let mut n_rm: u8 = 0;
-    let mut n_lm: u8 = 0;
     let mut n_rl: u8 = 0;
 
     // The indices of first unprocessed element in each block.
@@ -709,8 +709,6 @@ fn hoare_ternary_partition<T: Ord>(
 
     // The offset blocks.
     let mut offsets_lr = Block::new();
-    let mut offsets_rm = Block::new();
-    let mut offsets_lm = Block::new();
     let mut offsets_rl = Block::new();
 
     while j - i + 1 > 2 * BLOCK {
@@ -761,44 +759,30 @@ fn hoare_ternary_partition<T: Ord>(
                     let k = i + f;
                     let m = j - g;
 
-                    offsets_rm.write(n_rm, g as u8);
-                    offsets_lm.write(n_lm, f as u8);
+                    // offsets_rm.write(n_rm, g as u8);
+                    // offsets_lm.write(n_lm, f as u8);
 
                     tmp.select(k);
-                    n_rm += is_less(tmp.element(), high.element()) as u8;
+                    let swap_rm = is_less(tmp.element(), high.element());
+                    // n_rm += swap_rm as u8;
                     tmp.swap(m);
-                    n_lm += is_less(low.element(), tmp.get(k)) as u8;
-                }
-                h += 1;
-            }
+                    let swap_lm = is_less(low.element(), tmp.get(k));
+                    // n_lm += swap_lm as u8;
 
-            // Move the elements in left that should be in the middle to the temporary part
-            // in the beginning of the slice.
-            h = 0;
-            while h < n_lm {
-                unsafe {
-                    let m = i + offsets_lm.get(h);
-                    tmp.select(m);
-                    tmp.swap(p);
-                    p += 1;
-                }
-                h += 1;
-            }
-            n_lm = 0;
+                    if swap_rm {
+                        tmp.select(m);
+                        tmp.swap(q);
+                        q -= 1;
+                    }
 
-            // Move the elements in right that should be in the middle to the temporary part
-            // in the end of the slice.
-            h = 0;
-            while h < n_rm {
-                unsafe {
-                    let m = j - offsets_rm.get(h);
-                    tmp.select(m);
-                    tmp.swap(q);
-                    q -= 1;
+                    if swap_lm {
+                        tmp.select(k);
+                        tmp.swap(p);
+                        p += 1;
+                    }
                 }
                 h += 1;
             }
-            n_rm = 0;
 
             n_lr -= num;
             n_rl -= num;
@@ -866,7 +850,7 @@ fn hoare_ternary_partition<T: Ord>(
     let s_rm = (n - q - 1).min(q + 1 - i);
 
     unordered_swap(middle, 0, j, s_lm);
-    unordered_swap(middle, i, n-1, s_rm);
+    unordered_swap(middle, i, n - 1, s_rm);
 
     // let (left, right) = middle.split_at_mut(i);
 
