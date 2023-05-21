@@ -542,15 +542,15 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
         j -= BLOCK * (num_lt == 0) as usize;
     }
 
-    // Process the remaining elements. 
+    // Process the remaining elements.
     i += (start_ge as usize) * (num_ge > 0) as usize;
     j -= (start_lt as usize) * (num_lt > 0) as usize;
     unsafe {
         loop {
-            while i < j && tmp.get(i) < head {
+            while i < j && tmp.get(i) < pivot.element() {
                 i += 1;
             }
-            while i < j && tmp.get(j) >= head {
+            while i < j && tmp.get(j) >= pivot.element() {
                 j -= 1;
             }
             if i < j {
@@ -562,7 +562,7 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
                 break;
             }
         }
-        while i < n && tmp.get(i) < head {
+        while i < n && tmp.get(i) < pivot.element() {
             i += 1;
         }
     }
