@@ -448,87 +448,90 @@ where
 }
 
 fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
-    debug_assert!(!data.is_empty());
     data.swap(0, p);
-    let (head, tail) = data.split_at_mut(1);
+    let (head, tail) = data.split_first_mut().unwrap();
+    let mut pivot = Elem::from_mut(head);
+
     let (mut l, mut r) = (0, tail.len() - 1);
-    let pivot = &mut head[0];
-    let u;
     unsafe {
-        while l < r && is_less(pivot, tail.get_unchecked(r)) {
+        while l < r && is_less(pivot.element(), tail.get_unchecked(r)) {
             r -= 1;
         }
-        while l < r && is_less(tail.get_unchecked(l), pivot) {
+        while l < r && is_less(tail.get_unchecked(l), pivot.element()) {
             l += 1;
         }
+    }
 
-        let data = &mut tail[l..=r];
-        let n = data.len();
-        let mut tmp = Elem::new(data.as_mut_ptr());
-        let (mut i, mut j) = (0, n - 1);
-        let mut h: u8;
-        let mut num_ge: u8 = 0;
-        let mut num_lt: u8 = 0;
-        let mut start_ge: u8 = 0;
-        let mut start_lt: u8 = 0;
+    let n = r - l + 1;
+    let mut tmp = Elem::new(tail[l..=r].as_mut_ptr());
+    let (mut i, mut j) = (0, n - 1);
+    let mut h: u8;
+    let mut num_ge: u8 = 0;
+    let mut num_lt: u8 = 0;
+    let mut start_ge: u8 = 0;
+    let mut start_lt: u8 = 0;
 
-        let mut offsets_ge = Block::new();
-        let mut offsets_lt = Block::new();
+    let mut offsets_ge = Block::new();
+    let mut offsets_lt = Block::new();
 
-        while j - i + 1 > 2 * BLOCK {
-            if num_ge == 0 {
-                start_ge = 0;
-                h = 0;
-                while h < BLOCK as u8 {
+    while j - i + 1 > 2 * BLOCK {
+        if num_ge == 0 {
+            start_ge = 0;
+            h = 0;
+            while h < BLOCK as u8 {
+                unsafe {
                     offsets_ge.write(num_ge, h);
                     let elem = tmp.get(i + h as usize);
-                    num_ge += !is_less(elem, pivot) as u8;
-                    h += 1;
+                    num_ge += !is_less(elem, pivot.element()) as u8;
                 }
+                h += 1;
             }
-            if num_lt == 0 {
-                start_lt = 0;
-                h = 0;
-                while h < BLOCK as u8 {
+        }
+        if num_lt == 0 {
+            start_lt = 0;
+            h = 0;
+            while h < BLOCK as u8 {
+                unsafe {
                     offsets_lt.write(num_lt, h);
                     let elem = tmp.get(j - h as usize);
-                    num_lt += is_less(elem, pivot) as u8;
-                    h += 1;
+                    num_lt += is_less(elem, pivot.element()) as u8;
                 }
+                h += 1;
             }
+        }
 
-            let num = num_ge.min(num_lt);
-            if num > 0 {
-
-                h = 0;
-                while h < num {
+        let num = num_ge.min(num_lt);
+        if num > 0 {
+            h = 0;
+            while h < num {
+                unsafe {
                     let m = i + offsets_ge.get(start_ge + h);
                     let n = j - offsets_lt.get(start_lt + h);
                     tmp.select(m);
                     tmp.swap(n);
-                    h += 1;
                 }
-
-                num_ge -= num;
-                num_lt -= num;
-                start_ge += num;
-                start_lt += num;
+                h += 1;
             }
 
-            i += BLOCK * (num_ge == 0) as usize;
-            j -= BLOCK * (num_lt == 0) as usize;
+            num_ge -= num;
+            num_lt -= num;
+            start_ge += num;
+            start_lt += num;
         }
-        if num_ge > 0 {
-            i += start_ge as usize;
-        }
-        if num_lt > 0 {
-            j -= start_lt as usize;
-        }
+
+        i += BLOCK * (num_ge == 0) as usize;
+        j -= BLOCK * (num_lt == 0) as usize;
+    }
+
+    // Process the remaining elements
+    i += (start_ge as usize) * (num_ge > 0) as usize;
+    j -= (start_lt as usize) * (num_lt > 0) as usize;
+    unsafe {
         loop {
-            while i < j && tmp.get(i) < pivot {
+            while i < j && tmp.get(i) < head {
                 i += 1;
             }
-            while i < j && tmp.get(j) >= pivot {
+            while i < j && tmp.get(j) >= head {
                 j -= 1;
             }
             if i < j {
@@ -540,12 +543,15 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
                 break;
             }
         }
-        while i < n && tmp.get(i) < pivot {
+        while i < n && tmp.get(i) < head {
             i += 1;
         }
-        u = l + i;
     }
-    data.swap(0, u);
+
+    let u = l + i;
+    unsafe {
+        pivot.set(u);
+    }
     u
 }
 
@@ -569,89 +575,93 @@ fn lomuto_ternary_partition<T: Ord>(
 ) -> (usize, usize) {
     debug_assert!(!data.is_empty());
     data.swap(0, p);
-    let (head, tail) = data.split_at_mut(1);
-    let pivot = &mut head[0];
-    let (u, v);
+    let (head, tail) = data.split_first_mut().unwrap();
+    let mut pivot = Elem::from_mut(head);
+    let (mut l, mut r) = (0, tail.len() - 1);
+    let (mut i, mut j, mut k) = (0, 0, 0);
     unsafe {
-        let (mut l, mut r) = (0, tail.len() - 1);
-        while l < r && is_less(pivot, tail.get_unchecked(r)) {
+        while l < r && is_less(pivot.element(), tail.get_unchecked(r)) {
             r -= 1;
         }
-        while l < r && is_less(tail.get_unchecked(l), pivot) {
+        while l < r && is_less(tail.get_unchecked(l), pivot.element()) {
             l += 1;
         }
+    }
+    let n = r - l + 1;
 
-        let data = &mut tail[l..=r];
-        let n = data.len();
-        let (mut i, mut j, mut k) = (0, 0, 0);
+    let mut tmp = Elem::new(tail[l..=r].as_mut_ptr());
+    let mut offsets = Block::new();
+    let mut num_lt: u8 = 0;
+    let mut num_le: u8 = 0;
+    let mut h: u8 = 0;
 
-        let pivot = Elem::from_mut(pivot);
-        let mut tmp = Elem::new(data.as_mut_ptr());
-        let mut offsets = Block::new();
-        let mut num_lt: u8 = 0;
-        let mut num_le: u8 = 0;
-        let mut h: u8 = 0;
+    while k < n {
+        let size = (n - k).min(BLOCK) as u8;
 
-        while k < n {
-            let size = (n - k).min(BLOCK) as u8;
+        //                                | block |
+        // ┌─────────┬──────────┬─────────┬─────────────┐
+        // │ < pivot │ == pivot │ > pivot │   ? .. ?    │
+        // └─────────┴──────────┴─────────┴─────────────┘
+        //            i          j         k
 
-            //                                | block |
-            // ┌─────────┬──────────┬─────────┬─────────────┐
-            // │ < pivot │ == pivot │ > pivot │   ? .. ?    │
-            // └─────────┴──────────┴─────────┴─────────────┘
-            //            i          j         k
-
-            // Scan the block beginning at k and store the offsets to elements <= pivot.
-            while h < size {
+        // Scan the block beginning at k and store the offsets to elements <= pivot.
+        while h < size {
+            unsafe {
                 let elem = tmp.get(k + h as usize);
                 offsets.write(num_le, h);
                 num_le += !is_less(pivot.element(), elem) as u8;
-                h += 1;
             }
-            h = 0;
+            h += 1;
+        }
+        h = 0;
 
-            // Swap each element <= pivot with the first element > pivot and store the offsets to
-            // elements < pivot.
-            while h < num_le {
+        // Swap each element <= pivot with the first element > pivot and store the offsets to
+        // elements < pivot.
+        while h < num_le {
+            unsafe {
                 let m = k + offsets.get(h);
                 tmp.select(m);
                 offsets.write(num_lt, h);
                 num_lt += is_less(tmp.element(), pivot.element()) as u8;
                 tmp.swap(j + h as usize);
-                h += 1;
             }
-            h = 0;
+            h += 1;
+        }
+        h = 0;
 
-            // Swap each element < pivot with the first element >= pivot.
-            while h < num_lt {
+        // Swap each element < pivot with the first element >= pivot.
+        while h < num_lt {
+            unsafe {
                 let m = j + offsets.get(h);
                 tmp.select(m);
                 tmp.swap(i + h as usize);
-                h += 1;
             }
-            h = 0;
-
-            // Increment the indices
-            k += size as usize;
-            j += num_le as usize;
-            i += num_lt as usize;
-
-            // Reset the counters
-            (num_le, num_lt) = (0, 0);
-
-            // The first part contains elements x < pivot.
-            // debug_assert!(data[..i].iter().all(|x| is_less(x, pivot.element())));
-
-            // The middle part contains elements x == pivot.
-            // debug_assert!(data[i..j].iter().all(|x| !is_less(x, pivot.element())));
-            // debug_assert!(data[i..j].iter().all(|x| !is_less(pivot.element(), x)));
-
-            // The last part contains elements x > pivot. Elements after k have not been scanned
-            // yet and are unordered.
-            // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
+            h += 1;
         }
-        (u, v) = (l + i, l + j)
+        h = 0;
+
+        // Increment the indices
+        k += size as usize;
+        j += num_le as usize;
+        i += num_lt as usize;
+
+        // Reset the counters
+        (num_le, num_lt) = (0, 0);
+
+        // The first part contains elements x < pivot.
+        // debug_assert!(data[..i].iter().all(|x| is_less(x, pivot.element())));
+
+        // The middle part contains elements x == pivot.
+        // debug_assert!(data[i..j].iter().all(|x| !is_less(x, pivot.element())));
+        // debug_assert!(data[i..j].iter().all(|x| !is_less(pivot.element(), x)));
+
+        // The last part contains elements x > pivot. Elements after k have not been scanned
+        // yet and are unordered.
+        // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
     }
-    data.swap(0, u);
+    let (u, v) = (l + i, l + j);
+    unsafe {
+        pivot.set(u);
+    }
     (u, v)
 }
