@@ -447,24 +447,37 @@ where
     (u + offset, v + offset)
 }
 
+/// Partitions the slice into two parts using the element at `p` as the pivot and returns the index
+/// of the pivot after partitioning.
+///
+/// Using `u` to denote the index returned by the function, the resulting partitioning is:
+/// ```text
+/// ┌───────────┬────────────┐
+/// │ < data[u] │ >= data[u] │
+/// └───────────┴────────────┘
+///              u        
+/// ```
+///
+/// Panics if `p` is out of bounds.
 fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
     let mut pivot = Elem::from_mut(head);
 
+    // Find the first pair of elements that are out of order.
     let (mut l, mut r) = (0, tail.len() - 1);
     unsafe {
-        while l < r && is_less(pivot.element(), tail.get_unchecked(r)) {
-            r -= 1;
-        }
         while l < r && is_less(tail.get_unchecked(l), pivot.element()) {
             l += 1;
         }
+        while l < r && !is_less(tail.get_unchecked(r), pivot.element()) {
+            r -= 1;
+        }
     }
 
-    let n = r - l + 1;
-    let mut tmp = Elem::new(tail[l..=r].as_mut_ptr());
-    let (mut i, mut j) = (0, n - 1);
+    let (mut i, mut j) = (l, r);
+    let n = tail.len();
+    let mut tmp = Elem::new(tail.as_mut_ptr());
     let mut h: u8;
     let mut num_ge: u8 = 0;
     let mut num_lt: u8 = 0;
@@ -474,10 +487,13 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
     let mut offsets_ge = Block::new();
     let mut offsets_lt = Block::new();
 
+    // Repeat while the blocks don't overlap.
     while j - i + 1 > 2 * BLOCK {
+        // If the block is empty, scan the next elements.
         if num_ge == 0 {
             start_ge = 0;
             h = 0;
+            // Store the offsets of the elements >= pivot.
             while h < BLOCK as u8 {
                 unsafe {
                     offsets_ge.write(num_ge, h);
@@ -490,6 +506,7 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
         if num_lt == 0 {
             start_lt = 0;
             h = 0;
+            // Store the offsets of elements < pivot.
             while h < BLOCK as u8 {
                 unsafe {
                     offsets_lt.write(num_lt, h);
@@ -503,6 +520,7 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
         let num = num_ge.min(num_lt);
         if num > 0 {
             h = 0;
+            // Swap the out-of-order pairs.
             while h < num {
                 unsafe {
                     let m = i + offsets_ge.get(start_ge + h);
@@ -512,16 +530,46 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
                 }
                 h += 1;
             }
-
             num_ge -= num;
             num_lt -= num;
             start_ge += num;
             start_lt += num;
         }
 
+        // If the left block is finished, move it to the right by BLOCK elements.
         i += BLOCK * (num_ge == 0) as usize;
+        // If the right block is finished, move it to the left by BLOCK elements.
         j -= BLOCK * (num_lt == 0) as usize;
     }
+
+    // Process the remaining elements. 
+    i += (start_ge as usize) * (num_ge > 0) as usize;
+    j -= (start_lt as usize) * (num_lt > 0) as usize;
+    unsafe {
+        loop {
+            while i < j && tmp.get(i) < head {
+                i += 1;
+            }
+            while i < j && tmp.get(j) >= head {
+                j -= 1;
+            }
+            if i < j {
+                tmp.select(i);
+                tmp.swap(j);
+                i += 1;
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+        while i < n && tmp.get(i) < head {
+            i += 1;
+        }
+    }
+
+    unsafe { pivot.set(i) };
+    i
+}
 
     // Process the remaining elements
     i += (start_ge as usize) * (num_ge > 0) as usize;
@@ -555,16 +603,16 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
     u
 }
 
-/// Partitions the slice into three parts using the element at index `p` as the pivot value. Returns
-/// the indices of the first and last elements of the middle part, i.e. the elements equal to the
-/// pivot.
+/// Partitions the slice into three parts using the element at index `p` as the pivot. Returns
+/// the indices of the first and last elements of equal to the pivot.
 ///
-/// The resulting partition is:
+/// Using `(u, v)` to denote the indices returned by the function, the slice is partitioned as
+/// follows:
 /// ```text
-/// ┌─────────┬──────────┬─────────┐
-/// │ < pivot │ == pivot │ > pivot │
-/// └─────────┴──────────┴─────────┘
-///            u        v
+/// ┌───────────┬────────────┬───────────┐
+/// │ < data[u] │ == data[u] │ > data[u] │
+/// └───────────┴────────────┴───────────┘
+///              u          v
 /// ```
 ///
 /// Panics if the slice is empty or if `p` is out of bounds.
@@ -573,23 +621,22 @@ fn lomuto_ternary_partition<T: Ord>(
     p: usize,
     is_less: impl Fn(&T, &T) -> bool,
 ) -> (usize, usize) {
-    debug_assert!(!data.is_empty());
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
     let mut pivot = Elem::from_mut(head);
     let (mut l, mut r) = (0, tail.len() - 1);
-    let (mut i, mut j, mut k) = (0, 0, 0);
     unsafe {
-        while l < r && is_less(pivot.element(), tail.get_unchecked(r)) {
-            r -= 1;
-        }
         while l < r && is_less(tail.get_unchecked(l), pivot.element()) {
             l += 1;
         }
+        while l < r && !is_less(tail.get_unchecked(r), pivot.element()) {
+            r -= 1;
+        }
     }
-    let n = r - l + 1;
+    let (mut i, mut j, mut k) = (l, l, l);
+    let n = tail.len();
 
-    let mut tmp = Elem::new(tail[l..=r].as_mut_ptr());
+    let mut tmp = Elem::new(tail.as_mut_ptr());
     let mut offsets = Block::new();
     let mut num_lt: u8 = 0;
     let mut num_le: u8 = 0;
@@ -659,9 +706,6 @@ fn lomuto_ternary_partition<T: Ord>(
         // yet and are unordered.
         // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
     }
-    let (u, v) = (l + i, l + j);
-    unsafe {
-        pivot.set(u);
-    }
-    (u, v)
+    unsafe { pivot.set(i) };
+    (i, j)
 }
