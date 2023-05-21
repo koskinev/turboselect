@@ -123,6 +123,8 @@ fn large_median() {
     shuffle(data.as_mut_slice(), &mut pcg);
     let median = select_nth_unstable(data.as_mut_slice(), mid);
     assert_eq!(median, &mid);
+    assert!(data[..mid].iter().all(|elem| elem < &mid));
+    assert!(data[mid+1..].iter().all(|elem| elem > &mid));
 }
 
 #[test]

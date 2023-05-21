@@ -219,6 +219,43 @@ where
     low
 }
 
+fn prepare_partition_3<T: Ord, F>(
+    data: &mut [T],
+    index: usize,
+    is_less: F,
+    rng: &mut PCGRng,
+) -> (usize, usize)
+where
+    F: Fn(&T, &T) -> bool + Copy,
+{
+    // Take a random sample from the data for pivot selection
+    let len = data.len();
+    let (count, p, q) = sample_parameters(index, len);
+    let sample = sample(data, count, rng);
+
+    // Find the pivots
+    let (q_low, q_high) = floyd_rivest_select(sample, q, is_less, rng);
+
+    let (p_high, q_low) = if p < q_low {
+        // The low pivot must be less than the high pivot
+        let (_, p_high) = floyd_rivest_select(&mut sample[..q_low], p, is_less, rng);
+        (p_high, q_low)
+    } else {
+        // The low pivot is equal to the high pivot
+        (q_low, q_low + 1)
+    };
+
+    // Move sample elements >= high pivot to the end of the slice
+    unordered_swap(data, q_high + 1, len - 1, count - q_high - 1);
+
+    // Move sample elements == high pivot before the elements just moved to the end of the slice
+    unordered_swap(data, q_low, len - count + q_high, q_high - q_low + 1);
+
+    // Return the position of the last element equal to the low pivot and the position of the
+    // first element equal to the high pivot
+    (p_high, len - count + q_low)
+}
+
 /// Takes a `count` element random sample from the slice, placing it into the beginning of the
 /// slice. Returns the sample as a slice.
 fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [T] {
@@ -298,6 +335,28 @@ fn sort_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usi
     sort_2(data, c, d);
 }
 
+/// Performs an unordered swap of the first `count` elements starting from `left` with the last
+/// `count` elements ending at and including`right`.
+fn unordered_swap<T: Ord>(data: &mut [T], mut left: usize, mut right: usize, count: usize) {
+    if count == 0 {
+        return;
+    }
+    debug_assert!(left + count <= right);
+    debug_assert!(right <= data.len());
+    let inner = data[left..=right].as_mut();
+    (left, right) = (0, inner.len() - 1);
+    let mut elem = Elem::new(inner.as_mut_ptr());
+    unsafe {
+        elem.select(left);
+        elem.set(right);
+        for _ in 1..count {
+            left += 1;
+            elem.set(left);
+            right -= 1;
+            elem.set(right);
+        }
+    }
+}
 // Reorders the slice so that the element at `index` is at its sorted position. Returns the
 // indices of the first and last elements equal to the element at `index`.
 fn floyd_rivest_select<T: Ord, F>(
@@ -320,17 +379,30 @@ where
         } else if inner.len() < CUT {
             break quickselect(inner, inner_index, is_less, rng);
         } else if delta > 0 {
-            let p = prepare_partition_2(inner, inner_index, is_less, rng);
-            let sub = &mut inner[p..];
-            let u = hoare_partition(sub, 0, is_less);
-            match p + u {
-                u if inner_index < u => {
+            let (p, q) = prepare_partition_3(inner, inner_index, is_less, rng);
+            let sub = &mut inner[p..=q];
+            let (u, v) = hoare_ternary_partition(sub, 0, q-p, is_less);
+            match (p + u, p + v) {
+                (u, _v) if inner_index < u => {
                     inner = &mut inner[..u];
                 }
-                u => {
-                    inner = &mut inner[u..];
-                    inner_index -= u;
-                    offset += u;
+                (u, v) if inner_index <= v => {
+                    if inner[u] == inner[v] {
+                        break (u, v);
+                    } else if inner_index == u {
+                        break (u, u);
+                    } else if inner_index == v {
+                        break (v, v);
+                    } else {
+                        inner = &mut inner[u..=v];
+                        inner_index -= u;
+                        offset += u;
+                    }
+                }
+                (_u, v) => {
+                    inner = &mut inner[v + 1..];
+                    offset += v + 1;
+                    inner_index -= v + 1;
                 }
             }
         } else {
@@ -686,16 +758,16 @@ fn hoare_ternary_partition<T: Ord>(
                     let f = offsets_lr.get(s_lr + h);
                     let g = offsets_rl.get(s_rl + h);
 
-                    let m = i + f;
-                    let n = j - g;
+                    let k = i + f;
+                    let m = j - g;
 
                     offsets_rm.write(n_rm, g as u8);
                     offsets_lm.write(n_lm, f as u8);
 
-                    tmp.select(m);
+                    tmp.select(k);
                     n_rm += is_less(tmp.element(), high.element()) as u8;
-                    tmp.swap(n);
-                    n_lm += is_less(low.element(), tmp.get(m)) as u8;
+                    tmp.swap(m);
+                    n_lm += is_less(low.element(), tmp.get(k)) as u8;
                 }
                 h += 1;
             }
@@ -793,15 +865,18 @@ fn hoare_ternary_partition<T: Ord>(
     let s_lm = p.min(i - p);
     let s_rm = (n - q - 1).min(q + 1 - i);
 
-    let (left, right) = middle.split_at_mut(i);
+    unordered_swap(middle, 0, j, s_lm);
+    unordered_swap(middle, i, n-1, s_rm);
 
-    let (left_a, tail) = left.split_at_mut(s_lm);
-    let (_, left_b) = tail.split_at_mut(tail.len() - s_lm);
-    left_a.swap_with_slice(left_b);
+    // let (left, right) = middle.split_at_mut(i);
 
-    let (right_a, tail) = right.split_at_mut(s_rm);
-    let (_, right_b) = tail.split_at_mut(tail.len() - s_rm);
-    right_a.swap_with_slice(right_b);
+    // let (left_a, tail) = left.split_at_mut(s_lm);
+    // let (_, left_b) = tail.split_at_mut(tail.len() - s_lm);
+    // left_a.swap_with_slice(left_b);
+
+    // let (right_a, tail) = right.split_at_mut(s_rm);
+    // let (_, right_b) = tail.split_at_mut(tail.len() - s_rm);
+    // right_a.swap_with_slice(right_b);
 
     let u = i - p;
     let v = i + n - q;
