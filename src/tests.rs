@@ -1,5 +1,5 @@
 use crate::{
-    floyd_rivest_select, hoare_partition, hoare_ternary_partition, lomuto_ternary_partition,
+    floyd_rivest_select, hoare_dyad, hoare_trinity, lomuto_trinity,
     median_5, pcg_rng::PCGRng, quickselect, sample, select_min, select_nth_unstable, sort_3,
     sort_4,
 };
@@ -32,7 +32,7 @@ fn hoare_2() {
         let p = iter % count;
         let pivot = data[p];
 
-        let u = hoare_partition(&mut data, p, usize::lt);
+        let u = hoare_dyad(&mut data, p, usize::lt);
 
         assert!(data[..u].iter().all(|elem| elem < &pivot));
         assert!(data[u..].iter().all(|elem| elem >= &pivot));
@@ -51,7 +51,7 @@ fn hoare_3() {
 
         let (p, q) = (count / 3, 2 * count / 3);
 
-        let (u, v) = hoare_ternary_partition(data.as_mut_slice(), p, q, usize::lt);
+        let (u, v) = hoare_trinity(data.as_mut_slice(), p, q, usize::lt);
         let (low, high) = (&data[u], &data[v]);
 
         assert!(data[..u].iter().all(|elem| elem < low));
@@ -76,7 +76,7 @@ fn lomuto_3() {
         let p = iter % count;
         let pivot = data[p];
 
-        let (u, v) = lomuto_ternary_partition(&mut data, p, usize::lt);
+        let (u, v) = lomuto_trinity(&mut data, p, usize::lt);
 
         assert!(data[..u].iter().all(|elem| elem < &pivot));
         assert!(data[u..=v].iter().all(|elem| elem == &pivot));
@@ -97,7 +97,7 @@ fn floyd_rivest_300() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        let (u, v) = floyd_rivest_select(&mut data, k, usize::lt, &mut rng);
+        let (u, v) = floyd_rivest_select(&mut data, k, &usize::lt, &mut rng);
         assert!(u <= k && v >= k && v < count);
         let kth = data[k];
         assert_eq!(data[u], kth);
@@ -128,7 +128,7 @@ fn large_median() {
 }
 
 #[test]
-fn small_index() {
+fn extreme_index() {
     let mut pcg = PCGRng::new(123);
 
     #[cfg(not(miri))]
@@ -141,9 +141,18 @@ fn small_index() {
     let mut data: Vec<usize> = (0..count).collect();
     shuffle(data.as_mut_slice(), &mut pcg);
     let nth = *select_nth_unstable(data.as_mut_slice(), index);
+    
     assert!(data[..index].iter().all(|elem| elem < &nth));
     assert_eq!(data[index], nth);
     assert!(data[index + 1..].iter().all(|elem| elem > &nth));
+
+    let index = count - 42;
+    let nth = *select_nth_unstable(data.as_mut_slice(), index);
+    
+    assert!(data[..index].iter().all(|elem| elem < &nth));
+    assert_eq!(data[index], nth);
+    assert!(data[index + 1..].iter().all(|elem| elem > &nth));
+
 }
 
 #[test]
@@ -185,7 +194,6 @@ fn nth_small() {
 
     let max = 1000;
     let mut pcg = PCGRng::new(123);
-    let is_less = |a: &usize, b: &usize| a < b;
 
     for _iter in 0..repeat {
         let count = pcg.bounded_usize(1, max);
@@ -193,7 +201,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
         let index = pcg.bounded_usize(0, count);
-        let (u, v) = quickselect(&mut data, index, is_less, &mut pcg);
+        let (u, v) = quickselect(&mut data, index, &usize::lt, &mut pcg);
         let nth = data[index];
         assert_eq!(data[u], nth);
         assert_eq!(data[v], nth);

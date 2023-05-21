@@ -194,14 +194,9 @@ fn sample_parameters(index: usize, n: usize) -> (usize, usize, usize) {
     (size as usize, p, q)
 }
 
-fn prepare_partition_2<T: Ord, F>(
-    data: &mut [T],
-    index: usize,
-    is_less: F,
-    rng: &mut PCGRng,
-) -> usize
+fn prepare_unipivot<T: Ord, F>(data: &mut [T], index: usize, is_less: &F, rng: &mut PCGRng) -> usize
 where
-    F: Fn(&T, &T) -> bool + Copy,
+    F: Fn(&T, &T) -> bool,
 {
     // Take a random sample from the data for pivot selection
     let (len, k, q) = sample_parameters(index, data.len());
@@ -221,14 +216,14 @@ where
     low
 }
 
-fn prepare_partition_3<T: Ord, F>(
+fn prepare_bipivot<T: Ord, F>(
     data: &mut [T],
     index: usize,
-    is_less: F,
+    is_less: &F,
     rng: &mut PCGRng,
 ) -> (usize, usize)
 where
-    F: Fn(&T, &T) -> bool + Copy,
+    F: Fn(&T, &T) -> bool,
 {
     // Take a random sample from the data for pivot selection
     let len = data.len();
@@ -239,7 +234,7 @@ where
     let (q_low, q_high) = floyd_rivest_select(sample, q, is_less, rng);
 
     let (p_high, q_low) = if p < q_low {
-        // The low pivot must be less than the high pivot
+        // The lower pivot must be less than the higher pivot
         let (_, p_high) = floyd_rivest_select(&mut sample[..q_low], p, is_less, rng);
         (p_high, q_low)
     } else {
@@ -280,9 +275,9 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [
 pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
     let mut rng = PCGRng::new(0);
     if data.len() < CUT {
-        quickselect(data, index, T::lt, rng.as_mut());
+        quickselect(data, index, &T::lt, rng.as_mut());
     } else {
-        floyd_rivest_select(data, index, T::lt, rng.as_mut());
+        floyd_rivest_select(data, index, &T::lt, rng.as_mut());
     }
     &data[index]
 }
@@ -362,88 +357,85 @@ fn unordered_swap<T: Ord>(data: &mut [T], mut left: usize, mut right: usize, cou
 // Reorders the slice so that the element at `index` is at its sorted position. Returns the
 // indices of the first and last elements equal to the element at `index`.
 fn floyd_rivest_select<T: Ord, F>(
-    data: &mut [T],
-    index: usize,
-    is_less: F,
+    mut data: &mut [T],
+    mut index: usize,
+    is_less: &F,
     rng: &mut PCGRng,
 ) -> (usize, usize)
 where
-    F: Fn(&T, &T) -> bool + Copy,
+    F: Fn(&T, &T) -> bool,
 {
-    let (mut inner, mut inner_index) = (data, index);
     let (mut offset, mut delta) = (0, usize::MAX);
-    let (u, v) = loop {
-        let len = inner.len();
-        if inner_index == 0 {
-            break select_min(inner, is_less);
-        } else if inner_index == inner.len() - 1 {
-            break select_max(inner, is_less);
-        } else if inner.len() < CUT {
-            break quickselect(inner, inner_index, is_less, rng);
-        } else if delta > 0 {
-            let (p, q) = prepare_partition_3(inner, inner_index, is_less, rng);
-            let sub = &mut inner[p..=q];
-            let (u, v) = hoare_ternary_partition(sub, 0, q - p, is_less);
-            match (p + u, p + v) {
-                (u, _v) if inner_index < u => {
-                    inner = &mut inner[..u];
-                }
-                (u, v) if inner_index <= v => {
-                    if inner[u] == inner[v] {
-                        break (u, v);
-                    } else if inner_index == u {
-                        break (u, u);
-                    } else if inner_index == v {
-                        break (v, v);
-                    } else {
-                        inner = &mut inner[u..=v];
-                        inner_index -= u;
-                        offset += u;
-                    }
-                }
-                (_u, v) => {
-                    inner = &mut inner[v + 1..];
-                    offset += v + 1;
-                    inner_index -= v + 1;
-                }
+    let (mut u, mut v);
+    loop {
+        let len = data.len();
+        // When selecting the minimum or maximum, partioning is not necessary
+        if index == 0 {
+            (u, v) = select_min(data, &is_less);
+            break;
+        }
+        if index == data.len() - 1 {
+            (u, v) = select_max(data, &is_less);
+            break;
+        }
+        // When the slice is small enough, use quickselect
+        if data.len() < CUT {
+            (u, v) = quickselect(data, index, is_less, rng);
+            break;
+        }
+        if delta > 0 {
+            let (p, q) = prepare_bipivot(data, index, is_less, rng);
+
+            // If p = 0 or q = count - 1, dual-pivot parititioning is not necessary, use normal
+            // Hoare partitioning instead
+            let (l, m) = if p == 0 {
+                let m = hoare_dyad(data[p..=q].as_mut(), q, is_less);
+                (m, m)
+            } else if q == len - 1 {
+                let l = hoare_dyad(data[p..=q].as_mut(), 0, is_less);
+                (l, l)
+            } else {
+                hoare_trinity(data[p..=q].as_mut(), 0, q - p, is_less)
+            };
+            (u, v) = (l + p, m + p);
+        } else {
+            let p = prepare_unipivot(data, index, is_less, rng);
+            let (l, m) = lomuto_trinity(&mut data[p..], 0, is_less);
+            (u, v) = (l + p, m + p);
+        }
+
+        // Test if the pivot is at its sorted position and if not, recurse on the appropriate
+        // partition
+        if index < u {
+            data = &mut data[..u];
+        } else if index <= v {
+            if !is_less(&data[u], &data[v]) {
+                break;
+            } else if index == u {
+                v = u;
+                break;
+            } else if index == v {
+                u = v;
+                break;
+            } else {
+                data = &mut data[u..=v];
+                index -= u;
+                offset += u;
             }
         } else {
-            let p = prepare_partition_2(inner, inner_index, is_less, rng);
-            let sub = &mut inner[p..];
-            let (u, v) = lomuto_ternary_partition(sub, 0, is_less);
-            match (p + u, p + v) {
-                (u, _v) if inner_index < u => {
-                    inner = &mut inner[..u];
-                }
-                (u, v) if inner_index <= v => {
-                    if inner[u] == inner[v] {
-                        break (u, v);
-                    } else if inner_index == u {
-                        break (u, u);
-                    } else if inner_index == v {
-                        break (v, v);
-                    } else {
-                        inner = &mut inner[u..=v];
-                        inner_index -= u;
-                        offset += u;
-                    }
-                }
-                (_u, v) => {
-                    inner = &mut inner[v + 1..];
-                    offset += v + 1;
-                    inner_index -= v + 1;
-                }
-            }
+            data = &mut data[v + 1..];
+            offset += v + 1;
+            index -= v + 1;
         }
-        delta = len - inner.len();
-    };
+        delta = len - data.len();
+    }
     (u + offset, v + offset)
 }
 
-fn quickselect<T, F>(data: &mut [T], index: usize, is_less: F, rng: &mut PCGRng) -> (usize, usize)
+fn quickselect<T, F>(data: &mut [T], index: usize, is_less: &F, rng: &mut PCGRng) -> (usize, usize)
 where
     T: Ord,
-    F: Fn(&T, &T) -> bool + Copy,
+    F: Fn(&T, &T) -> bool,
 {
     let (mut d, mut i) = (data, index);
     let (mut offset, mut delta) = (0, usize::MAX);
@@ -460,7 +452,7 @@ where
                 }
                 sort_5(sample, 10, 11, 12, 13, 14);
                 if delta == 0 {
-                    match lomuto_ternary_partition(d, 12, is_less) {
+                    match lomuto_trinity(d, 12, is_less) {
                         (u, _v) if i < u => {
                             d = &mut d[..u];
                         }
@@ -472,7 +464,7 @@ where
                         }
                     }
                 } else {
-                    match hoare_partition(d, 12, is_less) {
+                    match hoare_dyad(d, 12, is_less) {
                         u if i < u => {
                             d = &mut d[..u];
                         }
@@ -487,7 +479,7 @@ where
             }
             (_, 6..) => {
                 median_5(d, 0, 1, 2, 3, 4);
-                match lomuto_ternary_partition(d, 2, is_less) {
+                match lomuto_trinity(d, 2, is_less) {
                     (u, _v) if i < u => {
                         d = &mut d[..u];
                     }
@@ -533,7 +525,7 @@ where
 /// ```
 ///
 /// Panics if `p` is out of bounds.
-fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
+fn hoare_dyad<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
     let mut pivot = Elem::from_mut(head);
@@ -659,7 +651,7 @@ fn hoare_partition<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) ->
 /// ```
 ///
 /// Panics if `p` or `q` are out of bounds.
-fn hoare_ternary_partition<T: Ord>(
+fn hoare_trinity<T: Ord>(
     data: &mut [T],
     p: usize,
     q: usize,
@@ -884,7 +876,7 @@ fn hoare_ternary_partition<T: Ord>(
 /// ```
 ///
 /// Panics if the slice is empty or if `p` is out of bounds.
-fn lomuto_ternary_partition<T: Ord>(
+fn lomuto_trinity<T: Ord>(
     data: &mut [T],
     p: usize,
     is_less: impl Fn(&T, &T) -> bool,
