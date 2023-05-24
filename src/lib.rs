@@ -300,12 +300,11 @@ where
 
     unsafe {
         let a = data.get_unchecked_mut(a) as *mut T;
-        let b = data.get_unchecked_mut(b) as *mut T;
-        let swap = !is_less(&*a, &*b);
-        let offset = (swap as isize) * b.offset_from(a);
-        let max = ptr::read(b.offset(-offset));
-        a.write(ptr::read(a.offset(offset)));
-        b.write(max);
+        let b = data.get_unchecked_mut(b);
+        let swap = is_less(b, &*a);
+        if swap {
+            ptr::swap(a, b);
+        }
         swap
     }
 }
