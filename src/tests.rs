@@ -1,7 +1,6 @@
 use crate::{
-    floyd_rivest_select, hoare_dyad, hoare_trinity, lomuto_trinity,
-    median_5, pcg_rng::PCGRng, quickselect, sample, select_min, select_nth_unstable, sort_3,
-    sort_4,
+    floyd_rivest_select, hoare_dyad, hoare_trinity, lomuto_trinity, median_5, pcg_rng::PCGRng,
+    quickselect, sample, select_min, select_nth_unstable, sort_2, sort_3, sort_4,
 };
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -51,7 +50,7 @@ fn hoare_3() {
 
         let (p, q) = (count / 3, 2 * count / 3);
 
-        let (u, v) = hoare_trinity(data.as_mut_slice(), p, q, usize::lt);
+        let (u, v) = hoare_trinity(data.as_mut_slice(), p, q, &usize::lt);
         let (low, high) = (&data[u], &data[v]);
 
         assert!(data[..u].iter().all(|elem| elem < low));
@@ -141,18 +140,17 @@ fn extreme_index() {
     let mut data: Vec<usize> = (0..count).collect();
     shuffle(data.as_mut_slice(), &mut pcg);
     let nth = *select_nth_unstable(data.as_mut_slice(), index);
-    
+
     assert!(data[..index].iter().all(|elem| elem < &nth));
     assert_eq!(data[index], nth);
     assert!(data[index + 1..].iter().all(|elem| elem > &nth));
 
     let index = count - 42;
     let nth = *select_nth_unstable(data.as_mut_slice(), index);
-    
+
     assert!(data[..index].iter().all(|elem| elem < &nth));
     assert_eq!(data[index], nth);
     assert!(data[index + 1..].iter().all(|elem| elem > &nth));
-
 }
 
 #[test]
@@ -244,6 +242,14 @@ fn min_10() {
 }
 
 #[test]
+fn sort2() {
+    let mut data = [1, 0];
+    let swapped = sort_2(data.as_mut_slice(), 0, 1, &i32::lt);
+    assert!(swapped);
+    assert_eq!(data, [0, 1]);
+}
+
+#[test]
 fn sort3() {
     #[cfg(not(miri))]
     let repeat = 1000;
@@ -255,7 +261,7 @@ fn sort3() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_3(&mut data, 0, 1, 2);
+        sort_3(&mut data, 0, 1, 2, &usize::lt);
         assert!(data[0] <= data[1]);
         assert!(data[1] <= data[2]);
     }
@@ -273,7 +279,7 @@ fn sort4() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_4(&mut data, 0, 1, 2, 3);
+        sort_4(&mut data, 0, 1, 2, 3, &usize::lt);
         assert!(data[0] <= data[1]);
         assert!(data[1] <= data[2]);
         assert!(data[2] <= data[3]);
@@ -292,7 +298,7 @@ fn median5() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        median_5(&mut data, 0, 1, 2, 3, 4);
+        median_5(&mut data, 0, 1, 2, 3, 4, &usize::lt);
         assert!(data[0] <= data[2]);
         assert!(data[1] <= data[2]);
         assert!(data[2] <= data[3]);

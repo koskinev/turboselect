@@ -1,8 +1,5 @@
 mod pcg_rng;
-use core::{
-    mem::{ManuallyDrop, MaybeUninit},
-    ptr,
-};
+use core::{mem::MaybeUninit, ptr};
 use pcg_rng::PCGRng;
 
 #[cfg(test)]
@@ -126,14 +123,25 @@ impl<T> Drop for Elem<T> {
     }
 }
 
-fn median_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) -> usize {
-    sort_2(data, a, b);
-    sort_2(data, c, d);
-    sort_2(data, a, c);
-    sort_2(data, b, d);
-    sort_2(data, c, e);
-    sort_2(data, b, c);
-    sort_2(data, c, e);
+fn median_5<T, F>(
+    data: &mut [T],
+    a: usize,
+    b: usize,
+    c: usize,
+    d: usize,
+    e: usize,
+    is_less: &F,
+) -> usize
+where
+    F: Fn(&T, &T) -> bool,
+{
+    sort_2(data, a, b, is_less);
+    sort_2(data, c, d, is_less);
+    sort_2(data, a, c, is_less);
+    sort_2(data, b, d, is_less);
+    sort_2(data, c, e, is_less);
+    sort_2(data, b, c, is_less);
+    sort_2(data, c, e, is_less);
     c
 }
 
@@ -282,59 +290,64 @@ pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
     &data[index]
 }
 
-fn sort_2<T: Ord>(data: &mut [T], a: usize, b: usize) -> bool {
+fn sort_2<T, F>(data: &mut [T], a: usize, b: usize, is_less: &F) -> bool
+where
+    F: Fn(&T, &T) -> bool,
+{
     debug_assert!(a != b);
     debug_assert!(a < data.len());
     debug_assert!(b < data.len());
 
-    let origin = data.as_mut_ptr();
     unsafe {
-        let a = origin.add(a) as *mut T;
-        let b = origin.add(b) as *mut T;
-        let min = (&*a).min(&*b) as *const T;
-        let swap = min == b;
-        let tmp = ManuallyDrop::new(ptr::read(min));
-        *b = ptr::read((&*a).max(&*b) as *const T);
-        *a = ManuallyDrop::into_inner(tmp);
+        let a = data.get_unchecked_mut(a) as *mut T;
+        let b = data.get_unchecked_mut(b) as *mut T;
+        let swap = !is_less(&*a, &*b);
+        let offset = (swap as isize) * b.offset_from(a);
+        let max = ptr::read(b.offset(-offset));
+        a.write(ptr::read(a.offset(offset)));
+        b.write(max);
         swap
     }
 }
 
-fn sort_3<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize) -> usize {
-    sort_2(data, a, b);
-    if sort_2(data, b, c) {
-        sort_2(data, a, b);
-    }
-    1
+fn sort_3<T, F>(data: &mut [T], a: usize, b: usize, c: usize, is_less: &F)
+where
+    F: Fn(&T, &T) -> bool,
+{
+    sort_2(data, a, c, is_less);
+    sort_2(data, a, b, is_less);
+    sort_2(data, b, c, is_less);
 }
 
-fn sort_4<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize) -> usize {
-    sort_2(data, a, b);
-    sort_2(data, c, d);
-    if sort_2(data, b, c) {
-        sort_2(data, a, b);
-    }
-    if sort_2(data, c, d) {
-        sort_2(data, b, c);
-    }
-    1
+fn sort_4<T, F>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, is_less: &F)
+where
+    F: Fn(&T, &T) -> bool,
+{
+    sort_2(data, a, c, is_less);
+    sort_2(data, b, d, is_less);
+    sort_2(data, a, b, is_less);
+    sort_2(data, c, d, is_less);
+    sort_2(data, b, c, is_less);
 }
 
-fn sort_5<T: Ord>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize) {
-    sort_2(data, a, d);
-    sort_2(data, b, e);
-    sort_2(data, a, c);
-    sort_2(data, b, d);
-    sort_2(data, a, b);
-    sort_2(data, c, e);
-    sort_2(data, b, c);
-    sort_2(data, d, e);
-    sort_2(data, c, d);
+fn sort_5<T, F>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize, is_less: &F)
+where
+    F: Fn(&T, &T) -> bool,
+{
+    sort_2(data, a, d, is_less);
+    sort_2(data, b, e, is_less);
+    sort_2(data, a, c, is_less);
+    sort_2(data, b, d, is_less);
+    sort_2(data, a, b, is_less);
+    sort_2(data, c, e, is_less);
+    sort_2(data, b, c, is_less);
+    sort_2(data, d, e, is_less);
+    sort_2(data, c, d, is_less);
 }
 
 /// Performs an unordered swap of the first `count` elements starting from `left` with the last
 /// `count` elements ending at and including`right`.
-fn unordered_swap<T: Ord>(data: &mut [T], mut left: usize, mut right: usize, count: usize) {
+fn unordered_swap<T>(data: &mut [T], mut left: usize, mut right: usize, count: usize) {
     if count == 0 {
         return;
     }
@@ -448,9 +461,9 @@ where
                 let len = d.len();
                 let sample = sample(d, 25, rng);
                 for j in 0..5 {
-                    median_5(sample, j, j + 5, j + 10, j + 15, j + 20);
+                    median_5(sample, j, j + 5, j + 10, j + 15, j + 20, is_less);
                 }
-                sort_5(sample, 10, 11, 12, 13, 14);
+                sort_5(sample, 10, 11, 12, 13, 14, is_less);
                 if delta == 0 {
                     match lomuto_trinity(d, 12, is_less) {
                         (u, _v) if i < u => {
@@ -478,7 +491,7 @@ where
                 delta = len - d.len();
             }
             (_, 6..) => {
-                median_5(d, 0, 1, 2, 3, 4);
+                median_5(d, 0, 1, 2, 3, 4, is_less);
                 match lomuto_trinity(d, 2, is_less) {
                     (u, _v) if i < u => {
                         d = &mut d[..u];
@@ -492,19 +505,19 @@ where
                 }
             }
             (_, 5) => {
-                sort_5(d, 0, 1, 2, 3, 4);
+                sort_5(d, 0, 1, 2, 3, 4, is_less);
                 break (i, i);
             }
             (_, 4) => {
-                sort_4(d, 0, 1, 2, 3);
+                sort_4(d, 0, 1, 2, 3, is_less);
                 break (i, i);
             }
             (_, 3) => {
-                sort_3(d, 0, 1, 2);
+                sort_3(d, 0, 1, 2, is_less);
                 break (i, i);
             }
             (_, 2) => {
-                sort_2(d, 0, 1);
+                sort_2(d, 0, 1, is_less);
                 break (i, i);
             }
             _ => break (i, i),
@@ -651,14 +664,12 @@ fn hoare_dyad<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool
 /// ```
 ///
 /// Panics if `p` or `q` are out of bounds.
-fn hoare_trinity<T: Ord>(
-    data: &mut [T],
-    p: usize,
-    q: usize,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
+fn hoare_trinity<T: Ord, F>(data: &mut [T], p: usize, q: usize, is_less: &F) -> (usize, usize)
+where
+    F: Fn(&T, &T) -> bool,
+{
     assert!(p < data.len() && q < data.len());
-    sort_2(data, p, q);
+    sort_2(data, p, q, is_less);
     data.swap(0, p);
     data.swap(q, data.len() - 1);
 
