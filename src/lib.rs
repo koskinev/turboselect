@@ -147,7 +147,7 @@ where
 
 /// Puts the minimum elements at the beginning of the slice and returns the indices of the first and
 /// last elements equal to the minimum.
-fn select_min<T: Ord>(data: &mut [T], is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
+fn select_min<T>(data: &mut [T], is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
     // The index of the last element that is equal to the minimum element.
     let mut v = 0;
     for i in 1..data.len() {
@@ -169,7 +169,7 @@ fn select_min<T: Ord>(data: &mut [T], is_less: impl Fn(&T, &T) -> bool) -> (usiz
 
 /// Puts the maximum elements at the end of the slice and returns the indices of the first and
 /// last elements equal to the maximum.
-fn select_max<T: Ord>(data: &mut [T], is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
+fn select_max<T>(data: &mut [T], is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
     let v = data.len() - 1;
     let mut u = v;
     for i in (0..v).rev() {
@@ -202,7 +202,7 @@ fn sample_parameters(index: usize, n: usize) -> (usize, usize, usize) {
     (size as usize, p, q)
 }
 
-fn prepare_unipivot<T: Ord, F>(data: &mut [T], index: usize, is_less: &F, rng: &mut PCGRng) -> usize
+fn prepare_unipivot<T, F>(data: &mut [T], index: usize, is_less: &F, rng: &mut PCGRng) -> usize
 where
     F: Fn(&T, &T) -> bool,
 {
@@ -224,7 +224,7 @@ where
     low
 }
 
-fn prepare_bipivot<T: Ord, F>(
+fn prepare_bipivot<T, F>(
     data: &mut [T],
     index: usize,
     is_less: &F,
@@ -369,7 +369,7 @@ fn unordered_swap<T>(data: &mut [T], mut left: usize, mut right: usize, count: u
 }
 // Reorders the slice so that the element at `index` is at its sorted position. Returns the
 // indices of the first and last elements equal to the element at `index`.
-fn floyd_rivest_select<T: Ord, F>(
+fn floyd_rivest_select<T, F>(
     mut data: &mut [T],
     mut index: usize,
     is_less: &F,
@@ -447,7 +447,6 @@ where
 
 fn quickselect<T, F>(data: &mut [T], index: usize, is_less: &F, rng: &mut PCGRng) -> (usize, usize)
 where
-    T: Ord,
     F: Fn(&T, &T) -> bool,
 {
     let (mut d, mut i) = (data, index);
@@ -538,7 +537,7 @@ where
 /// ```
 ///
 /// Panics if `p` is out of bounds.
-fn hoare_dyad<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
+fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
     let mut pivot = Elem::from_mut(head);
@@ -664,7 +663,7 @@ fn hoare_dyad<T: Ord>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool
 /// ```
 ///
 /// Panics if `p` or `q` are out of bounds.
-fn hoare_trinity<T: Ord, F>(data: &mut [T], p: usize, q: usize, is_less: &F) -> (usize, usize)
+fn hoare_trinity<T, F>(data: &mut [T], p: usize, q: usize, is_less: &F) -> (usize, usize)
 where
     F: Fn(&T, &T) -> bool,
 {
@@ -887,7 +886,7 @@ where
 /// ```
 ///
 /// Panics if the slice is empty or if `p` is out of bounds.
-fn lomuto_trinity<T: Ord>(
+fn lomuto_trinity<T>(
     data: &mut [T],
     p: usize,
     is_less: impl Fn(&T, &T) -> bool,
