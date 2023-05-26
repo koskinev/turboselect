@@ -382,14 +382,46 @@ fn small_index_perf() {
     );
 }
 
-// cargo test median_perf -- --nocapture
-// cargo flamegraph --unit-test -- median_perf
-
 #[test]
 fn median_perf() {
+    // cargo test median_perf -- --nocapture
+    // cargo flamegraph --unit-test -- median_perf
     let duration = 5.0;
     let count = 10_000_000;
     let mid = count / 2;
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Testing with {count} elements");
+    eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
+    timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            select_nth_unstable(data.as_mut_slice(), mid);
+        },
+        duration,
+    );
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
+    timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            data.select_nth_unstable(mid);
+        },
+        duration,
+    );
+}
+
+#[test]
+fn small_data_perf() {
+    // cargo test small_data_perf -- --nocapture
+    // cargo flamegraph --unit-test -- small_data_perf
+
+    let duration = 1.0;
+    let count = 1000;
+    let mid = count / 2;
+
+    eprintln!("Testing with {count} elements");
 
     let mut rng = PCGRng::new(1234);
     eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
