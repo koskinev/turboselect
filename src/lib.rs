@@ -524,7 +524,7 @@ where
     (u + offset, v + offset)
 }
 
-/// Partitions the slice into two parts using the element at `p` as the pivot and returns the index
+/// Partitions the slice into two parts using the element at `p` as the pivot. Returns the index
 /// of the pivot after partitioning.
 ///
 /// Using `u` to denote the index returned by the function, the resulting partitioning is:

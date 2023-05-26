@@ -15,6 +15,55 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
     }
 }
 
+/// Generates the test data of `count` random `u32` values.
+fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
+    let mut data = Vec::with_capacity(u32::MAX as usize);
+    while data.len() < count {
+        data.push(rng.u32());
+    }
+    data
+}
+
+/// Run the `test` closure repeatedly for at least `duration` seconds, timing each run. The
+/// `prep` closure is run once before each run of `test` and provides the data to be tested.
+/// Prints the number of runs, the total time, and the average, minimum, and maximum times.
+///
+/// The `prep` closure is ignored in the timing.
+fn timeit<D, P: FnMut() -> D, F: FnMut(D)>(mut prep: P, mut test: F, duration: f32) {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    let mut times = Vec::new();
+    let mut total = 0.0;
+    while total < duration {
+        let data = prep();
+        let now = Instant::now();
+        test(black_box(data));
+        let elapsed = now.elapsed().as_secs_f32();
+        times.push(elapsed);
+        total += elapsed;
+
+        print_timings(&times);
+    }
+    eprintln!();
+}
+
+/// Prints the number of runs, the total time, and the average, minimum, and maximum times.
+fn print_timings(times: &[f32]) {
+    let runs = times.len();
+    let total: f32 = times.iter().sum();
+    let avg = total / runs as f32;
+    let min = times
+        .iter()
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let max = times
+        .iter()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    eprint!("\r  {runs} runs in {total:.2} s: avg {avg:.6} s, min {min:.6} s, max {max:.6} s");
+}
+
 #[test]
 fn hoare_2() {
     #[cfg(not(miri))]
@@ -304,4 +353,61 @@ fn median5() {
         assert!(data[2] <= data[3]);
         assert!(data[2] <= data[4]);
     }
+}
+
+#[test]
+fn small_index_perf() {
+    let duration = 5.0;
+    let count = 10_000_000;
+    let mut rng = PCGRng::new(1234);
+
+    eprintln!("Testing with {count} elements");
+    eprintln!("Selecting the 42nd element using the Floyd & Rivest algorithm ...");
+    timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            select_nth_unstable(data.as_mut_slice(), 42);
+        },
+        duration,
+    );
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the 42nd element using std::slice::select_nth_unstable ...");
+    timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            data.select_nth_unstable(42);
+        },
+        duration,
+    );
+}
+
+// cargo test median_perf -- --nocapture
+// cargo flamegraph --unit-test -- median_perf
+
+#[test]
+fn median_perf() {
+    let duration = 5.0;
+    let count = 10_000_000;
+    let mid = count / 2;
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
+    timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            select_nth_unstable(data.as_mut_slice(), mid);
+        },
+        duration,
+    );
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
+    timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            data.select_nth_unstable(mid);
+        },
+        duration,
+    );
 }
