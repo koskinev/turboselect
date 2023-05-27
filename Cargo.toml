@@ -13,12 +13,12 @@ debug-assertions = false
 overflow-checks = false
 lto = true
 
-[profile.test]
-opt-level = 3
-debug = true
-split-debuginfo = '...'  # Platform-specific.
-debug-assertions = false
-overflow-checks = false
-lto = true
+# [profile.test]
+# opt-level = 3
+# debug = true
+# split-debuginfo = '...'  # Platform-specific.
+# debug-assertions = false
+# overflow-checks = false
+# lto = true
 
 [dependencies]

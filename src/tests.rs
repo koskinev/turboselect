@@ -27,9 +27,10 @@ fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
 /// Run the `test` closure repeatedly for at least `duration` seconds, timing each run. The
 /// `prep` closure is run once before each run of `test` and provides the data to be tested.
 /// Prints the number of runs, the total time, and the average, minimum, and maximum times.
+/// Returns a vector of the times for each run.
 ///
 /// The `prep` closure is ignored in the timing.
-fn timeit<D, P: FnMut() -> D, F: FnMut(D)>(mut prep: P, mut test: F, duration: f32) {
+fn timeit<D, P: FnMut() -> D, F: FnMut(D)>(mut prep: P, mut test: F, duration: f32) -> Vec<f32> {
     use std::hint::black_box;
     use std::time::Instant;
 
@@ -46,6 +47,7 @@ fn timeit<D, P: FnMut() -> D, F: FnMut(D)>(mut prep: P, mut test: F, duration: f
         print_timings(&times);
     }
     eprintln!();
+    times
 }
 
 /// Prints the number of runs, the total time, and the average, minimum, and maximum times.
@@ -80,10 +82,11 @@ fn hoare_2() {
         let p = iter % count;
         let pivot = data[p];
 
-        let u = hoare_dyad(&mut data, p, usize::lt);
+        let (u, v) = hoare_dyad(&mut data, p, usize::lt);
 
-        assert!(data[..u].iter().all(|elem| elem < &pivot));
-        assert!(data[u..].iter().all(|elem| elem >= &pivot));
+        assert!(data[..u].iter().all(|elem| elem <= &pivot));
+        assert!(data[u..=v].iter().all(|elem| elem == &pivot));
+        assert!(data[v + 1..].iter().all(|elem| elem >= &pivot));
     }
 }
 
@@ -413,9 +416,9 @@ fn median_perf() {
 }
 
 #[test]
-fn small_data_perf() {
-    // cargo test small_data_perf -- --nocapture
-    // cargo flamegraph --unit-test -- small_data_perf
+fn small_median_perf() {
+    // cargo test -r small_median_perf -- --nocapture
+    // cargo flamegraph --unit-test -- small_median_perf
 
     let duration = 1.0;
     let count = 1000;
@@ -424,8 +427,18 @@ fn small_data_perf() {
     eprintln!("Testing with {count} elements");
 
     let mut rng = PCGRng::new(1234);
-    eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
-    timeit(
+    eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
+    let theirs = timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            data.select_nth_unstable(mid);
+        },
+        duration,
+    );
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the median element using select::select_nth_unstable() ...");
+    let ours = timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             select_nth_unstable(data.as_mut_slice(), mid);
@@ -433,13 +446,8 @@ fn small_data_perf() {
         duration,
     );
 
-    let mut rng = PCGRng::new(1234);
-    eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
-    timeit(
-        || random_u32s(count, rng.as_mut()),
-        |mut data| {
-            data.select_nth_unstable(mid);
-        },
-        duration,
+    eprintln!(
+        "Std lib throughput is {:.2}x of ours",
+        (theirs.len() as f32) / (ours.len() as f32)
     );
 }

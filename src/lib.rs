@@ -44,6 +44,13 @@ struct Elem<T> {
 }
 
 impl<T> Elem<T> {
+    /// Deselects the current element. Unsafe because the element may not be selected.
+    unsafe fn deselect(&mut self) {
+        debug_assert!(self.ptr.is_some());
+        ptr::copy_nonoverlapping(self.tmp.assume_init_ref(), self.ptr.unwrap_unchecked(), 1);
+        self.ptr = None;
+    }
+
     /// Returns a reference to the current element. Unsafe because the element may not be selected.
     unsafe fn element(&self) -> &T {
         debug_assert!(self.ptr.is_some());
@@ -65,6 +72,7 @@ impl<T> Elem<T> {
         }
     }
 
+    #[inline]
     /// Returns a reference to the element at `index`. Unsafe because index must be in bounds.
     unsafe fn get(&self, index: usize) -> &T {
         &*self.origin.add(index)
@@ -121,6 +129,19 @@ impl<T> Drop for Elem<T> {
             }
         }
     }
+}
+
+macro_rules! unroll {
+    ($body:stmt) => {
+        $body
+        $body
+        $body
+        $body
+        $body
+        $body
+        $body
+        $body
+    };
 }
 
 fn median_5<T, F>(
@@ -290,6 +311,7 @@ pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
     &data[index]
 }
 
+#[inline]
 fn sort_2<T, F>(data: &mut [T], a: usize, b: usize, is_less: &F) -> bool
 where
     F: Fn(&T, &T) -> bool,
@@ -329,6 +351,7 @@ where
     sort_2(data, b, c, is_less);
 }
 
+#[inline]
 fn sort_5<T, F>(data: &mut [T], a: usize, b: usize, c: usize, d: usize, e: usize, is_less: &F)
 where
     F: Fn(&T, &T) -> bool,
@@ -401,11 +424,9 @@ where
             // If p = 0 or q = count - 1, dual-pivot parititioning is not necessary, use normal
             // Hoare partitioning instead
             let (l, m) = if p == 0 {
-                let m = hoare_dyad(data[p..=q].as_mut(), q, is_less);
-                (m, m)
+                hoare_dyad(data[p..=q].as_mut(), q, is_less)
             } else if q == len - 1 {
-                let l = hoare_dyad(data[p..=q].as_mut(), 0, is_less);
-                (l, l)
+                hoare_dyad(data[p..=q].as_mut(), 0, is_less)
             } else {
                 hoare_trinity(data[p..=q].as_mut(), 0, q - p, is_less)
             };
@@ -420,107 +441,95 @@ where
         // partition
         if index < u {
             data = &mut data[..u];
-        } else if index <= v {
-            if !is_less(&data[u], &data[v]) {
-                break;
-            } else if index == u {
-                v = u;
-                break;
-            } else if index == v {
-                u = v;
-                break;
-            } else {
-                data = &mut data[u..=v];
-                index -= u;
-                offset += u;
-            }
-        } else {
+        } else if index > v {
             data = &mut data[v + 1..];
             offset += v + 1;
             index -= v + 1;
+        } else if !is_less(&data[u], &data[v]) {
+            break;
+        } else {
+            data = &mut data[u..=v];
+            index -= u;
+            offset += u;
         }
         delta = len - data.len();
     }
     (u + offset, v + offset)
 }
 
-fn quickselect<T, F>(data: &mut [T], index: usize, is_less: &F, rng: &mut PCGRng) -> (usize, usize)
+fn quickselect<T, F>(
+    mut data: &mut [T],
+    mut index: usize,
+    is_less: &F,
+    rng: &mut PCGRng,
+) -> (usize, usize)
 where
     F: Fn(&T, &T) -> bool,
 {
-    let (mut d, mut i) = (data, index);
     let (mut offset, mut delta) = (0, usize::MAX);
-    assert!(i < d.len());
-    let (u, v) = loop {
-        match (i, d.len()) {
-            (0, _) => break select_min(d, is_less),
-            (i, len) if i == len - 1 => break select_max(d, is_less),
+    assert!(index < data.len());
+    let (mut u, mut v);
+    loop {
+        let len = data.len();
+        match (index, len) {
+            (0, _) => {
+                (u, v) = select_min(data, is_less);
+            }
+            (i, len) if i == len - 1 => {
+                (u, v) = select_max(data, is_less);
+            }
             (_, 25..) => {
-                let len = d.len();
-                let sample = sample(d, 25, rng);
+                let sample = sample(data, 25, rng);
                 for j in 0..5 {
-                    median_5(sample, j, j + 5, j + 10, j + 15, j + 20, is_less);
+                    sort_5(sample, j, j + 5, j + 10, j + 15, j + 20, is_less);
                 }
-                sort_5(sample, 10, 11, 12, 13, 14, is_less);
-                if delta == 0 {
-                    match lomuto_trinity(d, 12, is_less) {
-                        (u, _v) if i < u => {
-                            d = &mut d[..u];
-                        }
-                        (u, v) if i <= v => break (u, v),
-                        (_u, v) => {
-                            d = &mut d[v..];
-                            i -= v;
-                            offset += v;
-                        }
-                    }
+                let p = 5 * ((5 * index) / len);
+                sort_5(sample, p, p + 1, p + 2, p + 3, p + 4, is_less);
+                if delta > 0 {
+                    (u, v) = hoare_dyad(data, p + 2, is_less);
                 } else {
-                    match hoare_dyad(d, 12, is_less) {
-                        u if i < u => {
-                            d = &mut d[..u];
-                        }
-                        u => {
-                            d = &mut d[u..];
-                            i -= u;
-                            offset += u;
-                        }
-                    }
+                    (u, v) = lomuto_trinity(data, p + 2, is_less);
                 }
-                delta = len - d.len();
             }
             (_, 6..) => {
-                median_5(d, 0, 1, 2, 3, 4, is_less);
-                match lomuto_trinity(d, 2, is_less) {
-                    (u, _v) if i < u => {
-                        d = &mut d[..u];
-                    }
-                    (u, v) if i <= v => break (u, v),
-                    (_u, v) => {
-                        d = &mut d[v..];
-                        i -= v;
-                        offset += v;
-                    }
-                }
+                median_5(data, 0, 1, 2, 3, 4, is_less);
+                (u, v) = lomuto_trinity(data, 2, is_less);
             }
             (_, 5) => {
-                sort_5(d, 0, 1, 2, 3, 4, is_less);
-                break (i, i);
+                sort_5(data, 0, 1, 2, 3, 4, is_less);
+                (u, v) = (index, index);
             }
             (_, 4) => {
-                sort_4(d, 0, 1, 2, 3, is_less);
-                break (i, i);
+                sort_4(data, 0, 1, 2, 3, is_less);
+                (u, v) = (index, index);
             }
             (_, 3) => {
-                sort_3(d, 0, 1, 2, is_less);
-                break (i, i);
+                sort_3(data, 0, 1, 2, is_less);
+                (u, v) = (index, index);
             }
             (_, 2) => {
-                sort_2(d, 0, 1, is_less);
-                break (i, i);
+                sort_2(data, 0, 1, is_less);
+                (u, v) = (index, index);
             }
-            _ => break (i, i),
+            _ => {
+                (u, v) = (index, index);
+            }
         }
-    };
+        if index < u {
+            data = &mut data[..u];
+        } else if index > v {
+            data = &mut data[v + 1..];
+            offset += v + 1;
+            index -= v + 1;
+        } else if !is_less(&data[u], &data[v]) {
+            break;
+        } else {
+            data = &mut data[u..=v];
+            index -= u;
+            offset += u;
+        }
+        delta = len - data.len();
+    }
     (u + offset, v + offset)
 }
 
@@ -536,7 +545,7 @@ where
 /// ```
 ///
 /// Panics if `p` is out of bounds.
-fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> usize {
+fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
     let mut pivot = Elem::from_mut(head);
@@ -552,7 +561,6 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
         }
     }
 
-    let (mut i, mut j) = (l, r);
     let n = tail.len();
     let mut tmp = Elem::new(tail.as_mut_ptr());
     let mut h: u8;
@@ -565,19 +573,19 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
     let mut offsets_lt = Block::new();
 
     // Repeat while the blocks don't overlap.
-    while j - i + 1 > 2 * BLOCK {
+    while r - l + 1 > 2 * BLOCK {
         // If the block is empty, scan the next elements.
         if num_ge == 0 {
             start_ge = 0;
             h = 0;
             // Store the offsets of the elements >= pivot.
             while h < BLOCK as u8 {
-                unsafe {
+                unroll!(unsafe {
                     offsets_ge.write(num_ge, h);
-                    let elem = tmp.get(i + h as usize);
+                    let elem = tmp.get(l + h as usize);
                     num_ge += !is_less(elem, pivot.element()) as u8;
-                }
-                h += 1;
+                    h += 1;
+                });
             }
         }
         if num_lt == 0 {
@@ -585,27 +593,32 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
             h = 0;
             // Store the offsets of elements < pivot.
             while h < BLOCK as u8 {
-                unsafe {
+                unroll!(unsafe {
                     offsets_lt.write(num_lt, h);
-                    let elem = tmp.get(j - h as usize);
+                    let elem = tmp.get(r - h as usize);
                     num_lt += is_less(elem, pivot.element()) as u8;
-                }
-                h += 1;
+                    h += 1;
+                });
             }
         }
 
         let num = num_ge.min(num_lt);
         if num > 0 {
-            h = 0;
             // Swap the out-of-order pairs.
-            while h < num {
-                unsafe {
-                    let m = i + offsets_ge.get(start_ge + h);
-                    let n = j - offsets_lt.get(start_lt + h);
-                    tmp.select(m);
-                    tmp.swap(n);
+            unsafe {
+                let mut m = l + offsets_ge.get(start_ge);
+                let mut n = r - offsets_lt.get(start_lt);
+                tmp.select(m);
+                h = 1;
+                while h < num {
+                    tmp.set(n);
+                    m = l + offsets_ge.get(start_ge + h);
+                    tmp.set(m);
+                    n = r - offsets_lt.get(start_lt + h);
+                    h += 1;
                 }
-                h += 1;
+                tmp.set(n);
+                tmp.deselect();
             }
             num_ge -= num;
             num_lt -= num;
@@ -614,38 +627,38 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
         }
 
         // If the left block is finished, move it to the right by BLOCK elements.
-        i += BLOCK * (num_ge == 0) as usize;
+        l += BLOCK * (num_ge == 0) as usize;
         // If the right block is finished, move it to the left by BLOCK elements.
-        j -= BLOCK * (num_lt == 0) as usize;
+        r -= BLOCK * (num_lt == 0) as usize;
     }
 
     // Process the remaining elements.
-    i += (start_ge as usize) * (num_ge > 0) as usize;
-    j -= (start_lt as usize) * (num_lt > 0) as usize;
+    l += (start_ge as usize) * (num_ge > 0) as usize;
+    r -= (start_lt as usize) * (num_lt > 0) as usize;
     unsafe {
         loop {
-            while i < j && is_less(tmp.get(i), pivot.element()) {
-                i += 1;
+            while l < r && is_less(tmp.get(l), pivot.element()) {
+                l += 1;
             }
-            while i < j && !is_less(tmp.get(j), pivot.element()) {
-                j -= 1;
+            while l < r && !is_less(tmp.get(r), pivot.element()) {
+                r -= 1;
             }
-            if i < j {
-                tmp.select(i);
-                tmp.swap(j);
-                i += 1;
-                j -= 1;
+            if l < r {
+                tmp.select(l);
+                tmp.swap(r);
+                l += 1;
+                r -= 1;
             } else {
                 break;
             }
         }
-        while i < n && is_less(tmp.get(i), pivot.element()) {
-            i += 1;
+        while l < n && is_less(tmp.get(l), pivot.element()) {
+            l += 1;
         }
     }
 
-    unsafe { pivot.set(i) };
-    i
+    unsafe { pivot.set(l) };
+    (l, l)
 }
 
 /// Partitions the slice into three parts using the elements at indices `p` and `q` as the pivot
@@ -718,12 +731,12 @@ where
             h = 0;
             // Collect the offsets to elements >= low
             while h < BLOCK as u8 {
-                unsafe {
+                unroll!(unsafe {
                     offsets_lr.write(n_lr, h);
                     let elem = tmp.get(i + h as usize);
                     n_lr += !is_less(elem, low.element()) as u8;
-                }
-                h += 1;
+                    h += 1;
+                });
             }
         }
         if n_rl == 0 {
@@ -731,12 +744,12 @@ where
             h = 0;
             // Collect the offsets to elements <= high
             while h < BLOCK as u8 {
-                unsafe {
+                unroll!(unsafe {
                     offsets_rl.write(n_rl, h);
                     let elem = tmp.get(j - h as usize);
                     n_rl += !is_less(high.element(), elem) as u8;
-                }
-                h += 1;
+                    h += 1;
+                });
             }
         }
 
@@ -885,11 +898,7 @@ where
 /// ```
 ///
 /// Panics if the slice is empty or if `p` is out of bounds.
-fn lomuto_trinity<T>(
-    data: &mut [T],
-    p: usize,
-    is_less: impl Fn(&T, &T) -> bool,
-) -> (usize, usize) {
+fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
     let mut pivot = Elem::from_mut(head);
