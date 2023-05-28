@@ -387,17 +387,15 @@ where
         if index == 0 {
             (u, v) = select_min(data, is_less);
             break;
-        }
-        if index == data.len() - 1 {
+        } else if index == data.len() - 1 {
             (u, v) = select_max(data, is_less);
             break;
         }
         // When the slice is small enough, use quickselect
-        if data.len() < CUT {
+        else if data.len() < CUT {
             (u, v) = quickselect(data, index, is_less, rng);
             break;
-        }
-        if delta > 0 {
+        } else if delta > 8 {
             let (p, q) = prepare_bipivot(data, index, is_less, rng);
 
             // If p = 0 or q = count - 1, dual-pivot parititioning is not necessary, use normal
@@ -464,7 +462,7 @@ where
                 }
                 let p = 5 * ((5 * index) / len);
                 sort_5(sample, p, p + 1, p + 2, p + 3, p + 4, is_less);
-                if delta > 4 {
+                if delta > 8 {
                     (u, v) = hoare_dyad(data, p + 2, is_less);
                 } else {
                     (u, v) = lomuto_trinity(data, p + 2, is_less);
@@ -904,33 +902,35 @@ where
 ///
 /// Panics if the slice is empty or if `p` is out of bounds.
 fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
-    const BLOCK: usize = 128;
-
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
     let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
     let pivot = &*tmp;
-    
-    let (mut l, mut r) = (0, tail.len() - 1);
+
+    let (mut l, mut r, e);
     unsafe {
-        while l < r && is_less(tail.get_unchecked(l), pivot) {
-            l += 1;
+        l = tail.as_mut_ptr();
+        e = l.add(tail.len());
+        r = e.sub(1);
+        while l < r && is_less(&*l, pivot) {
+            l = l.add(1)
         }
-        while l < r && !is_less(tail.get_unchecked(r), pivot) {
-            r -= 1;
+        while l < r && !is_less(&*r, pivot) {
+            r = r.sub(1);
         }
     }
-    let (mut i, mut j, mut k) = (l, l, l);
-    let n = tail.len();
 
-    let mut tmp = Elem::new(tail.as_mut_ptr());
-    let mut offsets = Block::<BLOCK>::new();
+    let (mut i, mut j, mut k) = (l, l, l);
+
+    const BLOCK: usize = 128;
+    let mut offsets: [MaybeUninit<u8>; BLOCK] = [MaybeUninit::uninit(); BLOCK];
+    
     let mut num_lt: u8 = 0;
     let mut num_le: u8 = 0;
     let mut h: u8 = 0;
 
-    while k < n {
-        let size = (n - k).min(BLOCK) as u8;
+    while k < e {
+        let size = unsafe { (e.offset_from(k) as usize).min(BLOCK) as u8 };
 
         //                                | block |
         // ┌─────────┬──────────┬─────────┬─────────────┐
@@ -941,8 +941,8 @@ fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool)
         // Scan the block beginning at k and store the offsets to elements <= pivot.
         while h < size {
             unsafe {
-                let elem = tmp.get(k + h as usize);
-                offsets.write(num_le, h);
+                let elem = &*k.add(h as usize);
+                offsets.get_unchecked_mut(num_le as usize).write(h);
                 num_le += !is_less(pivot, elem) as u8;
             }
             h += 1;
@@ -951,33 +951,39 @@ fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool)
 
         // Swap each element <= pivot with the first element > pivot and store the offsets to
         // elements < pivot.
-        while h < num_le {
-            unsafe {
-                let m = k + offsets.get(h);
-                tmp.select(m);
-                offsets.write(num_lt, h);
-                num_lt += is_less(tmp.element(), pivot) as u8;
-                tmp.swap(j + h as usize);
+        unsafe {
+            let mut m = offsets.get_unchecked_mut(0).as_mut_ptr();
+            while h < num_le {
+                let elem = k.add(*m as usize);
+                offsets.get_unchecked_mut(num_lt as usize).write(h);
+                num_lt += is_less(&*elem, pivot) as u8;
+                let other = j.add(h as usize);
+                ptr::swap(elem, other);
+                m = m.add(1);
+                h += 1;
             }
-            h += 1;
         }
         h = 0;
 
         // Swap each element < pivot with the first element >= pivot.
-        while h < num_lt {
-            unsafe {
-                let m = j + offsets.get(h);
-                tmp.select(m);
-                tmp.swap(i + h as usize);
+        unsafe {
+            let mut m = offsets.get_unchecked_mut(0).as_mut_ptr();
+            while h < num_lt {
+                let elem = j.add(*m as usize);
+                let other = i.add(h as usize);
+                ptr::swap(elem, other);
+                m = m.add(1);
+                h += 1;
             }
-            h += 1;
         }
         h = 0;
 
         // Increment the indices
-        k += size as usize;
-        j += num_le as usize;
-        i += num_lt as usize;
+        unsafe {
+            k = k.add(size as usize);
+            j = j.add(num_le as usize);
+            i = i.add(num_lt as usize);
+        }
 
         // Reset the counters
         (num_le, num_lt) = (0, 0);
@@ -993,6 +999,11 @@ fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool)
         // yet and are unordered.
         // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
     }
-    unsafe { ptr::swap(head, data.get_unchecked_mut(i)) };
-    (i, j)
+    unsafe {
+        let u = i.offset_from(head) as usize - 1;
+        let v = j.offset_from(head) as usize - 1;
+        i = i.sub(1);
+        ptr::swap(head, i);
+        (u, v)
+    }
 }
