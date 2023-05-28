@@ -51,20 +51,6 @@ impl<T> Elem<T> {
         self.tmp.assume_init_ref()
     }
 
-    /// Creates a new `Elem` from a single element.
-    fn from_mut(elem: &mut T) -> Self {
-        let origin = elem as *mut T;
-        unsafe {
-            let val = origin.read();
-            let tmp = MaybeUninit::new(val);
-            Self {
-                origin,
-                ptr: Some(origin),
-                tmp,
-            }
-        }
-    }
-
     #[inline]
     /// Returns a reference to the element at `index`. Unsafe because index must be in bounds.
     unsafe fn get(&self, index: usize) -> &T {
