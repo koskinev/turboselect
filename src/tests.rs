@@ -84,7 +84,7 @@ fn hoare_2() {
 
         let (u, v) = hoare_dyad(&mut data, p, usize::lt);
 
-        assert!(data[..u].iter().all(|elem| elem <= &pivot));
+        assert!(data[..u].iter().all(|elem| elem < &pivot));
         assert!(data[u..=v].iter().all(|elem| elem == &pivot));
         assert!(data[v + 1..].iter().all(|elem| elem >= &pivot));
     }
@@ -360,6 +360,8 @@ fn median5() {
 
 #[test]
 fn small_index_perf() {
+    // cargo test -r small_index_perf -- --nocapture
+    // cargo flamegraph --unit-test -- small_index_perf
     let duration = 5.0;
     let count = 10_000_000;
     let mut rng = PCGRng::new(1234);
@@ -386,9 +388,9 @@ fn small_index_perf() {
 }
 
 #[test]
-fn median_perf() {
-    // cargo test median_perf -- --nocapture
-    // cargo flamegraph --unit-test -- median_perf
+fn large_median_perf() {
+    // cargo test -r large_median_perf -- --nocapture
+    // cargo flamegraph --unit-test -- large_median_perf
     let duration = 5.0;
     let count = 10_000_000;
     let mid = count / 2;
@@ -416,9 +418,31 @@ fn median_perf() {
 }
 
 #[test]
-fn small_median_perf() {
-    // cargo test -r small_median_perf -- --nocapture
-    // cargo flamegraph --unit-test -- small_median_perf
+fn our_small_median_perf() {
+    // cargo test -r our_small_median_perf -- --nocapture
+    // cargo flamegraph --unit-test -- our_small_median_perf
+
+    let duration = 1.0;
+    let count = 1000;
+    let mid = count / 2;
+
+    eprintln!("Testing with {count} elements");
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the median element using select::select_nth_unstable() ...");
+    timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            select_nth_unstable(data.as_mut_slice(), mid);
+        },
+        duration,
+    );
+}
+
+#[test]
+fn std_small_median_perf() {
+    // cargo test -r std_small_median_perf -- --nocapture
+    // cargo flamegraph --unit-test -- std_small_median_perf
 
     let duration = 1.0;
     let count = 1000;
@@ -428,26 +452,11 @@ fn small_median_perf() {
 
     let mut rng = PCGRng::new(1234);
     eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
-    let theirs = timeit(
+    timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             data.select_nth_unstable(mid);
         },
         duration,
-    );
-
-    let mut rng = PCGRng::new(1234);
-    eprintln!("Selecting the median element using select::select_nth_unstable() ...");
-    let ours = timeit(
-        || random_u32s(count, rng.as_mut()),
-        |mut data| {
-            select_nth_unstable(data.as_mut_slice(), mid);
-        },
-        duration,
-    );
-
-    eprintln!(
-        "Std lib throughput is {:.2}x of ours",
-        (theirs.len() as f32) / (ours.len() as f32)
     );
 }

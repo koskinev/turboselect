@@ -1,23 +1,23 @@
 mod pcg_rng;
 use core::{mem::MaybeUninit, ptr};
 use pcg_rng::PCGRng;
+use std::mem::ManuallyDrop;
 
 #[cfg(test)]
 mod tests;
 
 const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
-const BLOCK: usize = 128;
 const CUT: usize = 2000;
 
-struct Block {
-    offsets: [MaybeUninit<u8>; BLOCK],
+struct Block<const N: usize> {
+    offsets: [MaybeUninit<u8>; N],
 }
 
-impl Block {
-    fn new() -> Self {
+impl<const N: usize> Block<N> {
+    const fn new() -> Self {
         Self {
-            offsets: [MaybeUninit::uninit(); BLOCK],
+            offsets: [MaybeUninit::uninit(); N],
         }
     }
 
@@ -44,13 +44,6 @@ struct Elem<T> {
 }
 
 impl<T> Elem<T> {
-    /// Deselects the current element. Unsafe because the element may not be selected.
-    unsafe fn deselect(&mut self) {
-        debug_assert!(self.ptr.is_some());
-        ptr::copy_nonoverlapping(self.tmp.assume_init_ref(), self.ptr.unwrap_unchecked(), 1);
-        self.ptr = None;
-    }
-
     /// Returns a reference to the current element. Unsafe because the element may not be selected.
     unsafe fn element(&self) -> &T {
         debug_assert!(self.ptr.is_some());
@@ -78,7 +71,7 @@ impl<T> Elem<T> {
         &*self.origin.add(index)
     }
 
-    fn new(origin: *mut T) -> Self {
+    const fn new(origin: *mut T) -> Self {
         Self {
             origin,
             ptr: None,
@@ -485,7 +478,7 @@ where
                 }
                 let p = 5 * ((5 * index) / len);
                 sort_5(sample, p, p + 1, p + 2, p + 3, p + 4, is_less);
-                if delta > 0 {
+                if delta > 4 {
                     (u, v) = hoare_dyad(data, p + 2, is_less);
                 } else {
                     (u, v) = lomuto_trinity(data, p + 2, is_less);
@@ -548,32 +541,40 @@ where
 fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
-    let mut pivot = Elem::from_mut(head);
+    let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
+    let pivot = &*tmp;
 
     // Find the first pair of elements that are out of order.
-    let (mut l, mut r) = (0, tail.len() - 1);
+    let (mut l, mut r, e);
     unsafe {
-        while l < r && is_less(tail.get_unchecked(l), pivot.element()) {
-            l += 1;
+        l = tail.as_mut_ptr();
+        e = l.add(tail.len());
+        r = e.sub(1);
+        while l < r && is_less(&*l, pivot) {
+            l = l.add(1)
         }
-        while l < r && !is_less(tail.get_unchecked(r), pivot.element()) {
-            r -= 1;
+        while l < r && !is_less(&*r, pivot) {
+            r = r.sub(1);
         }
     }
 
-    let n = tail.len();
-    let mut tmp = Elem::new(tail.as_mut_ptr());
+    // let mut tmp = Elem::new(tail.as_mut_ptr());
     let mut h: u8;
     let mut num_ge: u8 = 0;
     let mut num_lt: u8 = 0;
     let mut start_ge: u8 = 0;
     let mut start_lt: u8 = 0;
 
-    let mut offsets_ge = Block::new();
-    let mut offsets_lt = Block::new();
+    const BLOCK: usize = 128;
+    let mut offsets_ge: [MaybeUninit<u8>; BLOCK] = [MaybeUninit::uninit(); BLOCK];
+    let mut offsets_lt: [MaybeUninit<u8>; BLOCK] = [MaybeUninit::uninit(); BLOCK];
+
+    fn width<U>(l: *mut U, r: *mut U) -> usize {
+        unsafe { r.offset_from(l) as usize + 1 }
+    }
 
     // Repeat while the blocks don't overlap.
-    while r - l + 1 > 2 * BLOCK {
+    while width(l, r) > 2 * BLOCK {
         // If the block is empty, scan the next elements.
         if num_ge == 0 {
             start_ge = 0;
@@ -581,9 +582,9 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
             // Store the offsets of the elements >= pivot.
             while h < BLOCK as u8 {
                 unroll!(unsafe {
-                    offsets_ge.write(num_ge, h);
-                    let elem = tmp.get(l + h as usize);
-                    num_ge += !is_less(elem, pivot.element()) as u8;
+                    offsets_ge.get_unchecked_mut(num_ge as usize).write(h);
+                    let elem = &*l.add(h as usize);
+                    num_ge += !is_less(elem, pivot) as u8;
                     h += 1;
                 });
             }
@@ -594,9 +595,9 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
             // Store the offsets of elements < pivot.
             while h < BLOCK as u8 {
                 unroll!(unsafe {
-                    offsets_lt.write(num_lt, h);
-                    let elem = tmp.get(r - h as usize);
-                    num_lt += is_less(elem, pivot.element()) as u8;
+                    offsets_lt.get_unchecked_mut(num_lt as usize).write(h);
+                    let elem = &*r.sub(h as usize);
+                    num_lt += is_less(elem, pivot) as u8;
                     h += 1;
                 });
             }
@@ -606,19 +607,33 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
         if num > 0 {
             // Swap the out-of-order pairs.
             unsafe {
-                let mut m = l + offsets_ge.get(start_ge);
-                let mut n = r - offsets_lt.get(start_lt);
-                tmp.select(m);
+                let mut m = offsets_ge.get_unchecked_mut(start_ge as usize).as_mut_ptr();
+                let mut n = offsets_lt.get_unchecked_mut(start_lt as usize).as_mut_ptr();
+                let tmp = ptr::read(l.add(*m as usize));
+                ptr::copy_nonoverlapping(r.sub(*n as usize), l.add(*m as usize), 1);
                 h = 1;
                 while h < num {
-                    tmp.set(n);
-                    m = l + offsets_ge.get(start_ge + h);
-                    tmp.set(m);
-                    n = r - offsets_lt.get(start_lt + h);
+                    m = m.add(1);
+                    ptr::copy_nonoverlapping(l.add(*m as usize), r.sub(*n as usize), 1);
+                    n = n.add(1);
+                    ptr::copy_nonoverlapping(r.sub(*n as usize), l.add(*m as usize), 1);
                     h += 1;
                 }
-                tmp.set(n);
-                tmp.deselect();
+                ptr::copy_nonoverlapping(&tmp, r.sub(*n as usize), 1);
+
+                // let mut m = l.add(offsets_ge.get(start_ge));
+                // let mut n = r.sub(offsets_lt.get(start_lt));
+                // let tmp = ptr::read(m);
+                // m.copy_from_nonoverlapping(n, 1);
+                // h = 1;
+                // while h < num {
+                //     m = l.add(offsets_ge.get(start_ge + h));
+                //     n.copy_from_nonoverlapping(m, 1);
+                //     n = r.sub(offsets_lt.get(start_lt + h));
+                //     m.copy_from_nonoverlapping(n, 1);
+                //     h += 1;
+                // }
+                // n.copy_from_nonoverlapping(&tmp, 1);
             }
             num_ge -= num;
             num_lt -= num;
@@ -626,39 +641,41 @@ fn hoare_dyad<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> 
             start_lt += num;
         }
 
-        // If the left block is finished, move it to the right by BLOCK elements.
-        l += BLOCK * (num_ge == 0) as usize;
-        // If the right block is finished, move it to the left by BLOCK elements.
-        r -= BLOCK * (num_lt == 0) as usize;
+        unsafe {
+            // If the left block is finished, move it to the right by BLOCK elements.
+            l = l.add(BLOCK * (num_ge == 0) as usize);
+            // If the right block is finished, move it to the left by BLOCK elements.
+            r = r.sub(BLOCK * (num_lt == 0) as usize);
+        }
     }
 
     // Process the remaining elements.
-    l += (start_ge as usize) * (num_ge > 0) as usize;
-    r -= (start_lt as usize) * (num_lt > 0) as usize;
     unsafe {
+        l = l.add((start_ge as usize) * (num_ge > 0) as usize);
+        r = r.sub((start_lt as usize) * (num_lt > 0) as usize);
         loop {
-            while l < r && is_less(tmp.get(l), pivot.element()) {
-                l += 1;
+            while l < r && is_less(&*l, pivot) {
+                l = l.add(1);
             }
-            while l < r && !is_less(tmp.get(r), pivot.element()) {
-                r -= 1;
+            while l < r && !is_less(&*r, pivot) {
+                r = r.sub(1);
             }
             if l < r {
-                tmp.select(l);
-                tmp.swap(r);
-                l += 1;
-                r -= 1;
+                l.swap(r);
+                l = l.add(1);
+                r = r.sub(1);
             } else {
                 break;
             }
         }
-        while l < n && is_less(tmp.get(l), pivot.element()) {
-            l += 1;
+        l = l.sub(1);
+        while l.add(1) < e && is_less(&*l.add(1), pivot) {
+            l = l.add(1);
         }
+        let u = l.offset_from(head) as usize;
+        ptr::swap(head, l);
+        (u, u)
     }
-
-    unsafe { pivot.set(l) };
-    (l, l)
 }
 
 /// Partitions the slice into three parts using the elements at indices `p` and `q` as the pivot
@@ -679,6 +696,8 @@ fn hoare_trinity<T, F>(data: &mut [T], p: usize, q: usize, is_less: &F) -> (usiz
 where
     F: Fn(&T, &T) -> bool,
 {
+    const BLOCK: usize = 128;
+
     assert!(p < data.len() && q < data.len());
     sort_2(data, p, q, is_less);
     data.swap(0, p);
@@ -722,8 +741,8 @@ where
     let mut s_rl: u8 = 0;
 
     // The offset blocks.
-    let mut offsets_lr = Block::new();
-    let mut offsets_rl = Block::new();
+    let mut offsets_lr = Block::<BLOCK>::new();
+    let mut offsets_rl = Block::<BLOCK>::new();
 
     while j - i + 1 > 2 * BLOCK {
         if n_lr == 0 {
@@ -899,15 +918,19 @@ where
 ///
 /// Panics if the slice is empty or if `p` is out of bounds.
 fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool) -> (usize, usize) {
+    const BLOCK: usize = 128;
+
     data.swap(0, p);
     let (head, tail) = data.split_first_mut().unwrap();
-    let mut pivot = Elem::from_mut(head);
+    let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
+    let pivot = &*tmp;
+    
     let (mut l, mut r) = (0, tail.len() - 1);
     unsafe {
-        while l < r && is_less(tail.get_unchecked(l), pivot.element()) {
+        while l < r && is_less(tail.get_unchecked(l), pivot) {
             l += 1;
         }
-        while l < r && !is_less(tail.get_unchecked(r), pivot.element()) {
+        while l < r && !is_less(tail.get_unchecked(r), pivot) {
             r -= 1;
         }
     }
@@ -915,7 +938,7 @@ fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool)
     let n = tail.len();
 
     let mut tmp = Elem::new(tail.as_mut_ptr());
-    let mut offsets = Block::new();
+    let mut offsets = Block::<BLOCK>::new();
     let mut num_lt: u8 = 0;
     let mut num_le: u8 = 0;
     let mut h: u8 = 0;
@@ -934,7 +957,7 @@ fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool)
             unsafe {
                 let elem = tmp.get(k + h as usize);
                 offsets.write(num_le, h);
-                num_le += !is_less(pivot.element(), elem) as u8;
+                num_le += !is_less(pivot, elem) as u8;
             }
             h += 1;
         }
@@ -947,7 +970,7 @@ fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool)
                 let m = k + offsets.get(h);
                 tmp.select(m);
                 offsets.write(num_lt, h);
-                num_lt += is_less(tmp.element(), pivot.element()) as u8;
+                num_lt += is_less(tmp.element(), pivot) as u8;
                 tmp.swap(j + h as usize);
             }
             h += 1;
@@ -984,6 +1007,6 @@ fn lomuto_trinity<T>(data: &mut [T], p: usize, is_less: impl Fn(&T, &T) -> bool)
         // yet and are unordered.
         // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
     }
-    unsafe { pivot.set(i) };
+    unsafe { ptr::swap(head, data.get_unchecked_mut(i)) };
     (i, j)
 }
