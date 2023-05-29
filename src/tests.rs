@@ -44,8 +44,11 @@ fn timeit<D, P: FnMut() -> D, F: FnMut(D)>(mut prep: P, mut test: F, duration: f
         times.push(elapsed);
         total += elapsed;
 
-        print_timings(&times);
+        if times.len() % 1000 == 0 {
+            print_timings(&times);
+        }
     }
+    print_timings(&times);
     eprintln!();
     times
 }
@@ -368,7 +371,7 @@ fn small_index_perf() {
 
     eprintln!("Testing with {count} elements");
     eprintln!("Selecting the 42nd element using the Floyd & Rivest algorithm ...");
-    timeit(
+    let ours = timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             select_nth_unstable(data.as_mut_slice(), 42);
@@ -378,12 +381,17 @@ fn small_index_perf() {
 
     let mut rng = PCGRng::new(1234);
     eprintln!("Selecting the 42nd element using std::slice::select_nth_unstable ...");
-    timeit(
+    let std = timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             data.select_nth_unstable(42);
         },
         duration,
+    );
+
+    eprintln!(
+        "Std lib throughput is {x} of ours",
+        x = (std.len() as f32) / (ours.len() as f32)
     );
 }
 
@@ -398,7 +406,7 @@ fn large_median_perf() {
     let mut rng = PCGRng::new(1234);
     eprintln!("Testing with {count} elements");
     eprintln!("Selecting the median element using the Floyd & Rivest algorithm ...");
-    timeit(
+    let ours = timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             select_nth_unstable(data.as_mut_slice(), mid);
@@ -408,21 +416,63 @@ fn large_median_perf() {
 
     let mut rng = PCGRng::new(1234);
     eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
-    timeit(
+    let std = timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             data.select_nth_unstable(mid);
         },
         duration,
     );
+
+    eprintln!(
+        "Std lib throughput is {x} of ours",
+        x = (std.len() as f32) / (ours.len() as f32)
+    );
 }
 
 #[test]
-fn our_small_median_perf() {
-    // cargo test -r our_small_median_perf -- --nocapture
-    // cargo flamegraph --unit-test -- our_small_median_perf
+fn small_42nd_perf() {
+    // cargo test -r our_small_index_perf -- --nocapture
+    // cargo flamegraph --unit-test -- our_small_index_perf
 
     let duration = 1.0;
+    let count = 1000;
+    let k = 42;
+
+    eprintln!("Testing with {count} elements");
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the element at index = {k} using select::select_nth_unstable() ...");
+    let ours = timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            select_nth_unstable(data.as_mut_slice(), k);
+        },
+        duration,
+    );
+
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the element at index = {k} using std::slice::select_nth_unstable() ...");
+    let std = timeit(
+        || random_u32s(count, rng.as_mut()),
+        |mut data| {
+            data.select_nth_unstable(k);
+        },
+        duration,
+    );
+
+    eprintln!(
+        "Std lib throughput is {x} of ours",
+        x = (std.len() as f32) / (ours.len() as f32)
+    );
+}
+
+#[test]
+fn small_median_perf() {
+    // cargo test -r small_median_perf -- --nocapture
+    // cargo flamegraph --unit-test -- small_median_perf
+
+    let duration = 5.0;
     let count = 1000;
     let mid = count / 2;
 
@@ -430,33 +480,26 @@ fn our_small_median_perf() {
 
     let mut rng = PCGRng::new(1234);
     eprintln!("Selecting the median element using select::select_nth_unstable() ...");
-    timeit(
+    let ours = timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             select_nth_unstable(data.as_mut_slice(), mid);
         },
         duration,
     );
-}
-
-#[test]
-fn std_small_median_perf() {
-    // cargo test -r std_small_median_perf -- --nocapture
-    // cargo flamegraph --unit-test -- std_small_median_perf
-
-    let duration = 1.0;
-    let count = 1000;
-    let mid = count / 2;
-
-    eprintln!("Testing with {count} elements");
 
     let mut rng = PCGRng::new(1234);
     eprintln!("Selecting the median element using std::slice::select_nth_unstable ...");
-    timeit(
+    let std = timeit(
         || random_u32s(count, rng.as_mut()),
         |mut data| {
             data.select_nth_unstable(mid);
         },
         duration,
+    );
+
+    eprintln!(
+        "Std lib throughput is {x} of ours",
+        x = (std.len() as f32) / (ours.len() as f32)
     );
 }
