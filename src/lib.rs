@@ -8,7 +8,7 @@ mod tests;
 
 const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
-const CUT: usize = 5000;
+const CUT: usize = 250000;
 
 fn median_5<T, F>(
     data: &mut [T],
