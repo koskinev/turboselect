@@ -24,73 +24,6 @@ fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
     data
 }
 
-/// Runs `func` and `baseline` repeatedly with data prepared by `prep` until `func` has run for at
-/// least `duration` seconds. Prints the number of runs, the total time, and the average, minimum,
-/// and maximum times for each closure. Also prints the throughput of `func` relative to `baseline`.
-///
-/// The `prep` closure is ignored in the timing.
-fn bench<D, P: FnMut() -> D, A: FnMut(D), B: FnMut(D)>(
-    mut prep: P,
-    mut func: A,
-    mut baseline: B,
-    duration: f32,
-) {
-    use std::hint::black_box;
-    use std::time::Instant;
-
-    eprintln!("Running the function for at least {duration:.2} seconds. The runs are randomly interleaved.");
-    eprintln!("Data preparation is ignored in the timing.");
-
-    let mut times = Vec::new();
-    let mut times_baseline = Vec::new();
-    let (mut total, mut total_baseline) = (0.0, 0.0);
-    let mut rng = PCGRng::new(0);
-    while total < duration {
-        let data = prep();
-        match rng.u64() % 2 {
-            0 => {
-                let now = Instant::now();
-                func(black_box(data));
-                let elapsed = now.elapsed().as_secs_f32();
-                times.push(elapsed);
-                total += elapsed;
-            }
-            1 => {
-                let now = Instant::now();
-                baseline(black_box(data));
-                let elapsed = now.elapsed().as_secs_f32();
-                times_baseline.push(elapsed);
-                total_baseline += elapsed;
-            }
-            _ => unreachable!(),
-        }
-    }
-    eprintln!("Function:");
-    print_timings(&times);
-    eprintln!("Baseline:");
-    print_timings(&times_baseline);
-    eprintln!(
-        "Throughput is {x} of baseline",
-        x = (times.len() as f32 / total) / (times_baseline.len() as f32 / total_baseline)
-    );
-}
-
-/// Prints the number of runs, the total time, and the average, minimum, and maximum times.
-fn print_timings(times: &[f32]) {
-    let runs = times.len();
-    let total: f32 = times.iter().sum();
-    let avg = total / runs as f32;
-    let min = times
-        .iter()
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let max = times
-        .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    eprintln!("  {runs} runs in {total:.2} s: avg {avg:.6} s, min {min:.6} s, max {max:.6} s");
-}
-
 #[test]
 fn block_dual() {
     let repeat = 1000;
@@ -344,98 +277,159 @@ fn median5() {
     }
 }
 
-#[test]
-#[ignore]
-fn small_index_perf() {
-    // cargo test -r small_index_perf -- --show-output --ignored
-    // cargo flamegraph --unit-test -- small_index_perf
-    let duration = 3.0;
-    let count = 10_000_000;
-    let mut rng = PCGRng::new(1234);
+/// Runs `func` and `baseline` repeatedly with data prepared by `prep` until `func` has run for at
+/// least `duration` seconds. Prints the number of runs, the total time, and the average, minimum,
+/// and maximum times for each closure. Also prints the throughput of `func` relative to `baseline`.
+///
+/// The `prep` closure is ignored in the timing.
+fn bench<D, P: FnMut() -> D, A: FnMut(D), B: FnMut(D)>(
+    mut prep: P,
+    mut func: A,
+    mut baseline: B,
+    duration: f32,
+) {
+    use std::hint::black_box;
+    use std::time::Instant;
 
-    eprintln!("Selecting the 42nd element from {count} elements.");
-    eprintln!("Baseline is core::slice::select_nth_unstable.");
+    eprintln!("Running the function for at least {duration:.2} seconds. The runs are randomly interleaved.");
+    eprintln!("Data preparation is ignored in the timing.");
+
+    let mut times = Vec::new();
+    let mut times_baseline = Vec::new();
+    let (mut total, mut total_baseline) = (0.0, 0.0);
+    let mut rng = PCGRng::new(0);
+    while total < duration {
+        let data = prep();
+        match rng.u64() % 2 {
+            0 => {
+                let now = Instant::now();
+                func(black_box(data));
+                let elapsed = now.elapsed().as_secs_f32();
+                times.push(elapsed);
+                total += elapsed;
+            }
+            1 => {
+                let now = Instant::now();
+                baseline(black_box(data));
+                let elapsed = now.elapsed().as_secs_f32();
+                times_baseline.push(elapsed);
+                total_baseline += elapsed;
+            }
+            _ => unreachable!(),
+        }
+    }
+    eprintln!("Function:");
+    print_timings(&times);
+    eprintln!("Baseline:");
+    print_timings(&times_baseline);
+    eprintln!(
+        "Throughput is {x} of baseline",
+        x = (times.len() as f32 / total) / (times_baseline.len() as f32 / total_baseline)
+    );
+}
+
+/// Prints the number of runs, the total time, and the average, minimum, and maximum times.
+fn print_timings(times: &[f32]) {
+    let runs = times.len();
+    let total: f32 = times.iter().sum();
+    let avg = total / runs as f32;
+    let min = times
+        .iter()
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let max = times
+        .iter()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    eprintln!("  {runs} runs in {total:.2} s: avg {avg:.6} s, min {min:.6} s, max {max:.6} s");
+}
+
+fn compare<P, T>(mut prep: P, count: usize, index: usize, duration: f32)
+where
+    P: FnMut(usize, &mut PCGRng) -> Vec<T>,
+    T: Ord
+{
+    let mut rng = PCGRng::new(1234);
+    eprintln!("Selecting the element at index {index} from {count} elements.");
     bench(
-        || random_u32s(count, rng.as_mut()),
+        || prep(count, rng.as_mut()),
         |mut data| {
-            select_nth_unstable(data.as_mut_slice(), 42);
+            select_nth_unstable(data.as_mut_slice(), index);
         },
         |mut data| {
-            data.select_nth_unstable(42);
+            data.select_nth_unstable(index);
         },
         duration,
     );
+    eprintln!();
 }
 
 #[test]
 #[ignore]
-fn large_median_perf() {
-    // cargo test -r large_median_perf -- --nocapture
-    // cargo flamegraph --unit-test -- large_median_perf
-    let duration = 5.0;
-    let count = 10_000_000;
-    let mid = count / 2;
+fn perf_tests() {
+    
+    // cargo test -r perf_tests -- --nocapture --ignored
 
-    let mut rng = PCGRng::new(1234);
-    eprintln!("Selecting the median from {count} elements.");
-    eprintln!("Baseline is core::slice::select_nth_unstable.");
-    bench(
-        || random_u32s(count, rng.as_mut()),
-        |mut data| {
-            select_nth_unstable(data.as_mut_slice(), mid);
-        },
-        |mut data| {
-            data.select_nth_unstable(mid);
-        },
-        duration,
+    eprintln!("Testing random data ...");
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        100_000_000,
+        42,
+        5.0,
     );
-}
-
-#[test]
-#[ignore]
-fn small_42nd_perf() {
-    // cargo test -r our_small_index_perf -- --nocapture
-    // cargo flamegraph --unit-test -- our_small_index_perf
-
-    let duration = 5.0;
-    let count = 1000;
-    let mut rng = PCGRng::new(1234);
-
-    eprintln!("Selecting the 42nd element from {count} elements.");
-    eprintln!("Baseline is core::slice::select_nth_unstable.");
-    bench(
-        || random_u32s(count, rng.as_mut()),
-        |mut data| {
-            select_nth_unstable(data.as_mut_slice(), 42);
-        },
-        |mut data| {
-            data.select_nth_unstable(42);
-        },
-        duration,
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        10_000_000,
+        42,
+        3.0,
     );
-}
-
-#[test]
-#[ignore]
-fn small_median_perf() {
-    // cargo test -r small_median_perf -- --nocapture --ignored
-    // cargo flamegraph --unit-test -- small_median_perf --ignored
-
-    let duration = 5.0;
-    let count = 1000;
-    let mid = count / 2;
-
-    let mut rng = PCGRng::new(1234);
-    eprintln!("Selecting the median from {count} elements.");
-    eprintln!("Baseline is core::slice::select_nth_unstable.");
-    bench(
-        || random_u32s(count, rng.as_mut()),
-        |mut data| {
-            select_nth_unstable(data.as_mut_slice(), mid);
-        },
-        |mut data| {
-            data.select_nth_unstable(mid);
-        },
-        duration,
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+    1_000_000,
+        42,
+        3.0,
     );
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        100_000,
+        42,
+        3.0,
+    );
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        10_000,
+        42,
+        3.0,
+    );
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        100_000_000,
+        50_000_000,
+        5.0,
+    );
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        10_000_000,
+        5_000_000,
+        3.0,
+    );
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        1_000_000,
+        500_000,
+        3.0,
+    );
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        100_000,
+        50_000,
+        3.0,
+    );
+    compare(
+        |count, rng| random_u32s(count, rng.as_mut()),
+        10_000,
+        5_000,
+        3.0,
+    );
+    eprintln!();
 }
