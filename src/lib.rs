@@ -10,19 +10,6 @@ const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
 const CUT: usize = 2000;
 
-macro_rules! unroll {
-    ($body:stmt) => {
-        $body
-        $body
-        $body
-        $body
-        $body
-        $body
-        $body
-        $body
-    };
-}
-
 fn median_5<T, F>(
     data: &mut [T],
     a: usize,
@@ -353,9 +340,9 @@ fn quickselect<T, F>(
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let (mut offset, mut delta) = (0, usize::MAX);
     assert!(index < data.len());
     let (mut u, mut v);
+    let mut offset = 0;
     loop {
         let len = data.len();
         match (index, len) {
@@ -372,10 +359,10 @@ where
                 }
                 let p = 5 * ((5 * index) / len);
                 sort_5(sample, p, p + 1, p + 2, p + 3, p + 4, is_less);
-                if delta > 8 {
+                if is_less(&data[p + 1], &data[p + 2]) {
                     (u, v) = partition_at_index(data, p + 2, is_less);
                 } else {
-                    (u, v) = partition_at_index_dual(data, (p + 1, p + 3), is_less);
+                    (u, v) = partition_at_index_dual(data, (p + 1, p + 2), is_less);
                 }
             }
             (_, 6..) => {
@@ -415,7 +402,6 @@ where
             index -= u;
             offset += u;
         }
-        delta = len - data.len();
     }
     (u + offset, v + offset)
 }
@@ -722,7 +708,7 @@ where
             // in the `is_done` case guarantee that `width(l, r) == block_l + block_r`,
             // namely, that the block sizes have been adjusted to account
             // for the smaller number of remaining elements.
-            l = unsafe { l.offset(block_l as isize) };
+            l = unsafe { l.add(block_l) };
         }
 
         if start_r == end_r {
@@ -731,7 +717,7 @@ where
             // SAFETY: Same argument as [block-width-guarantee]. Either this is a full block
             // `2*BLOCK`-wide, or `block_r` has been adjusted for the last handful of
             // elements.
-            r = unsafe { r.offset(-(block_r as isize)) };
+            r = unsafe { r.sub(block_r) };
         }
 
         if is_done {
@@ -795,7 +781,7 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     // Number of elements in a typical block.
-    const BLOCK: usize = 4;
+    const BLOCK: usize = 128;
 
     // The partitioning algorithm repeats the following steps until completion:
     //
