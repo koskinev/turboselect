@@ -1,6 +1,7 @@
 use crate::{
-    floyd_rivest_select, hoare_dyad, hoare_trinity, lomuto_trinity, median_5, pcg_rng::PCGRng,
-    quickselect, sample, select_min, select_nth_unstable, sort_2, sort_3, sort_4,
+    floyd_rivest_select, hoare_dyad, hoare_trinity, lomuto_trinity, median_5,
+    partition_in_blocks_dual, pcg_rng::PCGRng, quickselect, sample, select_min,
+    select_nth_unstable, sort_2, sort_3, sort_4,
 };
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -15,6 +16,8 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
     }
 }
 
+
+#[cfg(feature = "perf-test")]
 /// Generates the test data of `count` random `u32` values.
 fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
     let mut data = Vec::with_capacity(u32::MAX as usize);
@@ -24,6 +27,8 @@ fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
     data
 }
 
+
+#[cfg(feature = "perf-test")]
 /// Run the `test` closure repeatedly for at least `duration` seconds, timing each run. The
 /// `prep` closure is run once before each run of `test` and provides the data to be tested.
 /// Prints the number of runs, the total time, and the average, minimum, and maximum times.
@@ -53,6 +58,7 @@ fn timeit<D, P: FnMut() -> D, F: FnMut(D)>(mut prep: P, mut test: F, duration: f
     times
 }
 
+#[cfg(feature = "perf-test")]
 /// Prints the number of runs, the total time, and the average, minimum, and maximum times.
 fn print_timings(times: &[f32]) {
     let runs = times.len();
@@ -85,7 +91,7 @@ fn hoare_2() {
         let p = iter % count;
         let pivot = data[p];
 
-        let (u, v) = hoare_dyad(&mut data, p, usize::lt);
+        let (u, v) = hoare_dyad(&mut data, p, &mut usize::lt);
 
         assert!(data[..u].iter().all(|elem| elem < &pivot));
         assert!(data[u..=v].iter().all(|elem| elem == &pivot));
@@ -105,12 +111,35 @@ fn hoare_3() {
 
         let (p, q) = (count / 3, 2 * count / 3);
 
-        let (u, v) = hoare_trinity(data.as_mut_slice(), p, q, &usize::lt);
+        let (u, v) = hoare_trinity(data.as_mut_slice(), p, q, &mut usize::lt);
         let (low, high) = (&data[u], &data[v]);
 
         assert!(data[..u].iter().all(|elem| elem < low));
         assert!(data[u..=v].iter().all(|elem| low <= elem && elem <= high));
         assert!(data[v + 1..].iter().all(|elem| elem > high));
+    }
+}
+
+#[test]
+fn block_dual() {
+    let repeat = 1000;
+    let max_count = 30;
+    let mut rng = PCGRng::new(123);
+
+    for _iter in 0..repeat {
+        let count = rng.bounded_usize(1, max_count);
+
+        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
+
+        let x = rng.bounded_usize(0, count);
+        let y = rng.bounded_usize(0, count);
+
+        let (low, high) = if x < y { (&x, &y) } else { (&y, &x) };
+        let (u, v) = partition_in_blocks_dual(data.as_mut_slice(), low, high, &mut usize::lt);
+    
+        assert!(data[..u].iter().all(|elem| elem < low));
+        assert!(data[u..v].iter().all(|elem| low <= elem && elem <= high));
+        assert!(data[v..].iter().all(|elem| elem > high));
     }
 }
 
@@ -130,7 +159,7 @@ fn lomuto_3() {
         let p = iter % count;
         let pivot = data[p];
 
-        let (u, v) = lomuto_trinity(&mut data, p, usize::lt);
+        let (u, v) = lomuto_trinity(&mut data, p, &mut usize::lt);
 
         assert!(data[..u].iter().all(|elem| elem < &pivot));
         assert!(data[u..=v].iter().all(|elem| elem == &pivot));
@@ -151,7 +180,7 @@ fn floyd_rivest_300() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        let (u, v) = floyd_rivest_select(&mut data, k, &usize::lt, &mut rng);
+        let (u, v) = floyd_rivest_select(&mut data, k, &mut usize::lt, &mut rng);
         assert!(u <= k && v >= k && v < count);
         let kth = data[k];
         assert_eq!(data[u], kth);
@@ -254,7 +283,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
         let index = pcg.bounded_usize(0, count);
-        let (u, v) = quickselect(&mut data, index, &usize::lt, &mut pcg);
+        let (u, v) = quickselect(&mut data, index, &mut usize::lt, &mut pcg);
         let nth = data[index];
         assert_eq!(data[u], nth);
         assert_eq!(data[v], nth);
@@ -290,7 +319,7 @@ fn min_10() {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         shuffle(data.as_mut_slice(), rng.as_mut());
 
-        let (_u, v) = select_min(data.as_mut_slice(), usize::lt);
+        let (_u, v) = select_min(data.as_mut_slice(), &mut usize::lt);
         let min = &data[0];
         assert!(data[..=v].iter().all(|elem| elem == min));
     }
@@ -299,7 +328,7 @@ fn min_10() {
 #[test]
 fn sort2() {
     let mut data = [1, 0];
-    let swapped = sort_2(data.as_mut_slice(), 0, 1, &i32::lt);
+    let swapped = sort_2(data.as_mut_slice(), 0, 1, &mut i32::lt);
     assert!(swapped);
     assert_eq!(data, [0, 1]);
 }
@@ -316,7 +345,7 @@ fn sort3() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_3(&mut data, 0, 1, 2, &usize::lt);
+        sort_3(&mut data, 0, 1, 2, &mut usize::lt);
         assert!(data[0] <= data[1]);
         assert!(data[1] <= data[2]);
     }
@@ -334,7 +363,7 @@ fn sort4() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_4(&mut data, 0, 1, 2, 3, &usize::lt);
+        sort_4(&mut data, 0, 1, 2, 3, &mut usize::lt);
         assert!(data[0] <= data[1]);
         assert!(data[1] <= data[2]);
         assert!(data[2] <= data[3]);
@@ -353,7 +382,7 @@ fn median5() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        median_5(&mut data, 0, 1, 2, 3, 4, &usize::lt);
+        median_5(&mut data, 0, 1, 2, 3, 4, &mut usize::lt);
         assert!(data[0] <= data[2]);
         assert!(data[1] <= data[2]);
         assert!(data[2] <= data[3]);
@@ -362,6 +391,7 @@ fn median5() {
 }
 
 #[test]
+#[cfg(feature = "perf-test")]
 fn small_index_perf() {
     // cargo test -r small_index_perf -- --nocapture
     // cargo flamegraph --unit-test -- small_index_perf
@@ -396,6 +426,7 @@ fn small_index_perf() {
 }
 
 #[test]
+#[cfg(feature = "perf-test")]
 fn large_median_perf() {
     // cargo test -r large_median_perf -- --nocapture
     // cargo flamegraph --unit-test -- large_median_perf
@@ -431,6 +462,7 @@ fn large_median_perf() {
 }
 
 #[test]
+#[cfg(feature = "perf-test")]
 fn small_42nd_perf() {
     // cargo test -r our_small_index_perf -- --nocapture
     // cargo flamegraph --unit-test -- our_small_index_perf
@@ -468,6 +500,7 @@ fn small_42nd_perf() {
 }
 
 #[test]
+#[cfg(feature = "perf-test")]
 fn small_median_perf() {
     // cargo test -r small_median_perf -- --nocapture
     // cargo flamegraph --unit-test -- small_median_perf
