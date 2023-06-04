@@ -8,7 +8,7 @@ mod tests;
 
 const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
-const CUT: usize = 2000;
+const CUT: usize = 5000;
 
 fn median_5<T, F>(
     data: &mut [T],
@@ -196,6 +196,7 @@ where
     debug_assert!(a < data.len());
     debug_assert!(b < data.len());
 
+    // NB: The branchless version doesn't seem to be any faster than this.
     unsafe {
         let a = data.get_unchecked_mut(a) as *mut T;
         let b = data.get_unchecked_mut(b);
