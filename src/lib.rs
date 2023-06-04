@@ -38,23 +38,24 @@ fn select_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    // The index of the last element that is equal to the minimum element.
-    let mut v = 0;
-    for i in 1..data.len() {
-        // If the element is less than the first element of the array, swap the elements
-        // and set v = 0.
-        if is_less(&data[i], &data[0]) {
-            v = 0;
-            data.swap(0, i);
-        }
-        // Otherwise, if the first element is not less than the element, it must be equal to
-        // the element. Increment v and swap the element with the element at v.
-        else if !is_less(&data[0], &data[i]) {
-            v += 1;
-            data.swap(i, v);
+    let mut elem = data.as_mut_ptr();
+    if let Some((first, tail)) = data.split_first_mut() {
+        let mut min_ptr = elem;
+        unsafe {
+            elem = elem.add(1);
+            let mut tmp = ManuallyDrop::new(ptr::read(first));
+            let min = &mut *tmp;
+            for _ in 0..tail.len() {
+                if is_less(&*elem, min) {
+                    *min = ptr::read(elem);
+                    min_ptr = elem;
+                }
+                elem = elem.add(1);
+            }
+            ptr::swap(first, min_ptr);
         }
     }
-    (0, v)
+    (0, 0)
 }
 
 /// Puts the maximum elements at the end of the slice and returns the indices of the first and
@@ -64,22 +65,23 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     let v = data.len() - 1;
-    let mut u = v;
-    for i in (0..v).rev() {
-        // If the element is greater than the last element of the array, swap the elements
-        // and set u = v.
-        if is_less(&data[v], &data[i]) {
-            u = v;
-            data.swap(i, v);
-        }
-        // Otherwise, if the last element is not greater than the element, it must be equal to
-        // the element. Decrement u and swap the element with the element at u.
-        else if !is_less(&data[i], &data[v]) {
-            u -= 1;
-            data.swap(i, u);
+    let mut elem = data.as_mut_ptr();
+    if let Some((last, tail)) = data.split_last_mut() {
+        unsafe {
+            let mut max_ptr = elem.add(v);
+            let mut tmp = ManuallyDrop::new(ptr::read(last));
+            let max = &mut *tmp;
+            for _ in 0..tail.len() {
+                if is_less(max, &*elem) {
+                    *max = ptr::read(elem);
+                    max_ptr = elem;
+                }
+                elem = elem.add(1);
+            }
+            ptr::swap(last, max_ptr);
         }
     }
-    (u, v)
+    (v, v)
 }
 
 /// For the given index and slice length, returns `(size, p, q)`, where `size` is the sample size
