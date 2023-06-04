@@ -10,106 +10,6 @@ const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
 const CUT: usize = 2000;
 
-struct Block<const N: usize> {
-    offsets: [MaybeUninit<u8>; N],
-}
-
-impl<const N: usize> Block<N> {
-    const fn new() -> Self {
-        Self {
-            offsets: [MaybeUninit::uninit(); N],
-        }
-    }
-
-    #[inline]
-    unsafe fn write(&mut self, index: u8, value: u8) {
-        self.offsets.get_unchecked_mut(index as usize).write(value);
-    }
-
-    #[inline]
-    unsafe fn get(&self, index: u8) -> usize {
-        self.offsets.get_unchecked(index as usize).assume_init() as usize
-    }
-}
-
-struct Elem<T> {
-    /// A pointer to the first element of the slice.
-    origin: *mut T,
-
-    /// A pointer to the position of the current element.
-    ptr: Option<*mut T>,
-
-    /// A temporary storage for the value of the current element.
-    tmp: MaybeUninit<T>,
-}
-
-impl<T> Elem<T> {
-    /// Returns a reference to the current element. Unsafe because the element may not be selected.
-    unsafe fn element(&self) -> &T {
-        debug_assert!(self.ptr.is_some());
-
-        self.tmp.assume_init_ref()
-    }
-
-    #[inline]
-    /// Returns a reference to the element at `index`. Unsafe because index must be in bounds.
-    unsafe fn get(&self, index: usize) -> &T {
-        &*self.origin.add(index)
-    }
-
-    const fn new(origin: *mut T) -> Self {
-        Self {
-            origin,
-            ptr: None,
-            tmp: MaybeUninit::uninit(),
-        }
-    }
-
-    /// Selects the element at `index` as the current element. Unsafe because the index must be in
-    /// bounds.
-    unsafe fn select(&mut self, index: usize) {
-        debug_assert!(self.ptr.is_none());
-        let src = self.origin.add(index);
-        self.ptr = Some(src);
-        self.tmp.write(ptr::read(src));
-    }
-
-    #[inline]
-    /// Sets the position of the current element to `index`. This also moves the position of the
-    /// element at `index` to the previous position of the current element.
-    ///
-    /// Unsafe because index must be in bounds and the current element must be selected.
-    unsafe fn set(&mut self, index: usize) {
-        debug_assert!(self.ptr.is_some());
-        let src = self.origin.add(index);
-        self.ptr.unwrap_unchecked().write(src.read());
-        self.ptr = Some(src);
-    }
-
-    #[inline]
-    /// Swaps the current element with the element at `index`. Unsafe because index must be in
-    /// bounds and the current element must be selected.
-    unsafe fn swap(&mut self, index: usize) {
-        debug_assert!(self.ptr.is_some());
-        let dst = self.origin.add(index);
-        self.ptr.unwrap_unchecked().write(dst.read());
-        dst.write(self.tmp.assume_init_read());
-        self.ptr = None;
-    }
-}
-
-impl<T> Drop for Elem<T> {
-    #[inline]
-    fn drop(&mut self) {
-        // Write the temporary value to the current element.
-        if let Some(ptr) = self.ptr {
-            unsafe {
-                ptr::copy_nonoverlapping(self.tmp.assume_init_ref(), ptr, 1);
-            }
-        }
-    }
-}
-
 macro_rules! unroll {
     ($body:stmt) => {
         $body
@@ -273,17 +173,19 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [
     let len = data.len();
     assert!(count <= len);
     unsafe {
-        let mut elem = Elem::new(data.as_mut_ptr());
-        elem.select(0);
+        let ptr = data.as_mut_ptr();
+        let tmp = ManuallyDrop::new(ptr::read(ptr));
+        let (mut src, mut dst) = (ptr.add(rng.bounded_usize(0, len)), ptr);
+        ptr::copy(src, dst, 1);
         for i in 1..count {
-            let j = rng.bounded_usize(i, len);
-            elem.set(j);
-            elem.set(i);
+            dst = dst.add(1);
+            ptr::copy(dst, src, 1);
+            src = ptr.add(rng.bounded_usize(i, len));
+            ptr::copy(src, dst, 1);
         }
-        let j = rng.bounded_usize(0, len);
-        elem.set(j);
+        src.write(ManuallyDrop::into_inner(tmp));
+        &mut data[..count]
     }
-    &mut data[..count]
 }
 
 pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
@@ -354,24 +256,26 @@ where
 
 /// Performs an unordered swap of the first `count` elements starting from `left` with the last
 /// `count` elements ending at and including`right`.
-fn unordered_swap<T>(data: &mut [T], mut left: usize, mut right: usize, count: usize) {
+fn unordered_swap<T>(data: &mut [T], left: usize, right: usize, count: usize) {
     if count == 0 {
         return;
     }
     debug_assert!(left + count <= right);
     debug_assert!(right <= data.len());
     let inner = data[left..=right].as_mut();
-    (left, right) = (0, inner.len() - 1);
-    let mut elem = Elem::new(inner.as_mut_ptr());
     unsafe {
-        elem.select(left);
-        elem.set(right);
+        let ptr = inner.as_mut_ptr();
+        let mut l = ptr;
+        let mut r = ptr.add(inner.len() - 1);
+        let tmp = ManuallyDrop::new(ptr::read(l));
+        ptr::copy_nonoverlapping(r, l, 1);
         for _ in 1..count {
-            left += 1;
-            elem.set(left);
-            right -= 1;
-            elem.set(right);
+            l = l.add(1);
+            ptr::copy_nonoverlapping(l, r, 1);
+            r = r.sub(1);
+            ptr::copy_nonoverlapping(r, l, 1);
         }
+        r.write(ManuallyDrop::into_inner(tmp));
     }
 }
 // Reorders the slice so that the element at `index` is at its sorted position. Returns the
@@ -516,510 +420,6 @@ where
     (u + offset, v + offset)
 }
 
-/// Partitions the slice into two parts using the element at `p` as the pivot. Returns the index
-/// of the pivot after partitioning.
-///
-/// Using `u` to denote the index returned by the function, the resulting partitioning is:
-/// ```text
-/// ┌───────────┬────────────┐
-/// │ < data[u] │ >= data[u] │
-/// └───────────┴────────────┘
-///              u        
-/// ```
-///
-/// Panics if `p` is out of bounds.
-fn hoare_dyad<T, F>(data: &mut [T], p: usize, is_less: &mut F) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    data.swap(0, p);
-    let (head, tail) = data.split_first_mut().unwrap();
-    let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
-    let pivot = &*tmp;
-
-    // Find the first pair of elements that are out of order.
-    let (mut l, mut r, e);
-    unsafe {
-        l = tail.as_mut_ptr();
-        e = l.add(tail.len());
-        r = e.sub(1);
-        while l < r && is_less(&*l, pivot) {
-            l = l.add(1)
-        }
-        while l < r && !is_less(&*r, pivot) {
-            r = r.sub(1);
-        }
-    }
-
-    // let mut tmp = Elem::new(tail.as_mut_ptr());
-    let mut h: u8;
-    let mut num_ge: u8 = 0;
-    let mut num_lt: u8 = 0;
-    let mut start_ge: u8 = 0;
-    let mut start_lt: u8 = 0;
-
-    const BLOCK: usize = 128;
-    let mut offsets_ge: [MaybeUninit<u8>; BLOCK] = [MaybeUninit::uninit(); BLOCK];
-    let mut offsets_lt: [MaybeUninit<u8>; BLOCK] = [MaybeUninit::uninit(); BLOCK];
-
-    fn width<U>(l: *mut U, r: *mut U) -> usize {
-        unsafe { r.offset_from(l) as usize + 1 }
-    }
-
-    // Repeat while the blocks don't overlap.
-    while width(l, r) > 2 * BLOCK {
-        // If the block is empty, scan the next elements.
-        if num_ge == 0 {
-            start_ge = 0;
-            h = 0;
-            // Store the offsets of the elements >= pivot.
-            while h < BLOCK as u8 {
-                unroll!(unsafe {
-                    offsets_ge.get_unchecked_mut(num_ge as usize).write(h);
-                    let elem = &*l.add(h as usize);
-                    num_ge += !is_less(elem, pivot) as u8;
-                    h += 1;
-                });
-            }
-        }
-        if num_lt == 0 {
-            start_lt = 0;
-            h = 0;
-            // Store the offsets of elements < pivot.
-            while h < BLOCK as u8 {
-                unroll!(unsafe {
-                    offsets_lt.get_unchecked_mut(num_lt as usize).write(h);
-                    let elem = &*r.sub(h as usize);
-                    num_lt += is_less(elem, pivot) as u8;
-                    h += 1;
-                });
-            }
-        }
-
-        let num = num_ge.min(num_lt);
-        if num > 0 {
-            // Swap the out-of-order pairs.
-            unsafe {
-                let mut m = offsets_ge.get_unchecked_mut(start_ge as usize).as_mut_ptr();
-                let mut n = offsets_lt.get_unchecked_mut(start_lt as usize).as_mut_ptr();
-                let tmp = ptr::read(l.add(*m as usize));
-                ptr::copy_nonoverlapping(r.sub(*n as usize), l.add(*m as usize), 1);
-                h = 1;
-                while h < num {
-                    m = m.add(1);
-                    ptr::copy_nonoverlapping(l.add(*m as usize), r.sub(*n as usize), 1);
-                    n = n.add(1);
-                    ptr::copy_nonoverlapping(r.sub(*n as usize), l.add(*m as usize), 1);
-                    h += 1;
-                }
-                ptr::copy_nonoverlapping(&tmp, r.sub(*n as usize), 1);
-
-                // let mut m = l.add(offsets_ge.get(start_ge));
-                // let mut n = r.sub(offsets_lt.get(start_lt));
-                // let tmp = ptr::read(m);
-                // m.copy_from_nonoverlapping(n, 1);
-                // h = 1;
-                // while h < num {
-                //     m = l.add(offsets_ge.get(start_ge + h));
-                //     n.copy_from_nonoverlapping(m, 1);
-                //     n = r.sub(offsets_lt.get(start_lt + h));
-                //     m.copy_from_nonoverlapping(n, 1);
-                //     h += 1;
-                // }
-                // n.copy_from_nonoverlapping(&tmp, 1);
-            }
-            num_ge -= num;
-            num_lt -= num;
-            start_ge += num;
-            start_lt += num;
-        }
-
-        unsafe {
-            // If the left block is finished, move it to the right by BLOCK elements.
-            l = l.add(BLOCK * (num_ge == 0) as usize);
-            // If the right block is finished, move it to the left by BLOCK elements.
-            r = r.sub(BLOCK * (num_lt == 0) as usize);
-        }
-    }
-
-    // Process the remaining elements.
-    unsafe {
-        l = l.add((start_ge as usize) * (num_ge > 0) as usize);
-        r = r.sub((start_lt as usize) * (num_lt > 0) as usize);
-        loop {
-            while l < r && is_less(&*l, pivot) {
-                l = l.add(1);
-            }
-            while l < r && !is_less(&*r, pivot) {
-                r = r.sub(1);
-            }
-            if l < r {
-                l.swap(r);
-                l = l.add(1);
-                r = r.sub(1);
-            } else {
-                break;
-            }
-        }
-        l = l.sub(1);
-        while l.add(1) < e && is_less(&*l.add(1), pivot) {
-            l = l.add(1);
-        }
-        let u = l.offset_from(head) as usize;
-        ptr::swap(head, l);
-        (u, u)
-    }
-}
-
-/// Partitions the slice into three parts using the elements at indices `p` and `q` as the pivot
-/// values. Returns the indices of the first and last elements of between or equal to the pivot
-/// values.
-///
-/// Using `(u, v)` to denote the indices returned by the function, the slice is partitioned as
-/// follows:
-/// ```text
-/// ┌───────────┬──────────────────────────┬───────────┐
-/// │ < data[u] │ data[u] <= .. <= data[v] │ > data[v] │
-/// └───────────┴──────────────────────────┴───────────┘
-///              u                        v
-/// ```
-///
-/// Panics if `p` or `q` are out of bounds.
-fn hoare_trinity<T, F>(data: &mut [T], p: usize, q: usize, is_less: &mut F) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    const BLOCK: usize = 128;
-
-    assert!(p < data.len() && q < data.len());
-    sort_2(data, p, q, is_less);
-    data.swap(0, p);
-    data.swap(q, data.len() - 1);
-
-    // Copy the pivots to the stack.
-    let ptr = unsafe { data.get_unchecked_mut(0) } as *mut T;
-    let mut low = Elem::new(ptr);
-    let mut high = Elem::new(ptr);
-    unsafe {
-        low.select(0);
-        high.select(data.len() - 1);
-    }
-
-    let (_, tail) = data.split_first_mut().unwrap();
-    let (_, middle) = tail.split_last_mut().unwrap();
-
-    // Find the first pair of elements that are out of order.
-    let (mut l, mut r) = (0, middle.len() - 1);
-    unsafe {
-        while l < r && is_less(middle.get_unchecked(l), low.element()) {
-            l += 1;
-        }
-        while l < r && is_less(high.element(), middle.get_unchecked(r)) {
-            r -= 1;
-        }
-    }
-
-    let n = middle.len();
-    let (mut i, mut j, mut p, mut q) = (l, r, 0, n - 1);
-    let mut tmp = Elem::new(middle.as_mut_ptr());
-
-    let mut h: u8;
-
-    // The block lenghts
-    let mut n_lr: u8 = 0;
-    let mut n_rl: u8 = 0;
-
-    // The indices of first unprocessed element in each block.
-    let mut s_lr: u8 = 0;
-    let mut s_rl: u8 = 0;
-
-    // The offset blocks.
-    let mut offsets_lr = Block::<BLOCK>::new();
-    let mut offsets_rl = Block::<BLOCK>::new();
-
-    while j - i + 1 > 2 * BLOCK {
-        if n_lr == 0 {
-            s_lr = 0;
-            h = 0;
-            // Collect the offsets to elements >= low
-            while h < BLOCK as u8 {
-                unroll!(unsafe {
-                    offsets_lr.write(n_lr, h);
-                    let elem = tmp.get(i + h as usize);
-                    n_lr += !is_less(elem, low.element()) as u8;
-                    h += 1;
-                });
-            }
-        }
-        if n_rl == 0 {
-            s_rl = 0;
-            h = 0;
-            // Collect the offsets to elements <= high
-            while h < BLOCK as u8 {
-                unroll!(unsafe {
-                    offsets_rl.write(n_rl, h);
-                    let elem = tmp.get(j - h as usize);
-                    n_rl += !is_less(high.element(), elem) as u8;
-                    h += 1;
-                });
-            }
-        }
-
-        // We use the beginning and the end of the slice as a temporary store for the elements
-        // that belong to the middle:
-        //  ┌─────────────────┬───────┬─────┬────────┬──────────────────┐
-        //  │low <= .. < high │ < low │  ?  │ > high │ low < .. <= high │
-        //  └─────────────────┴───────┴─────┴────────┴──────────────────┘
-        //   0                 p       i   j        q                    n
-
-        let num = n_lr.min(n_rl);
-        if num > 0 {
-            // Swap the out-of-order pairs and store the indices of the elements that belong to
-            // the middle.
-            h = 0;
-            while h < num {
-                unsafe {
-                    let f = offsets_lr.get(s_lr + h);
-                    let g = offsets_rl.get(s_rl + h);
-
-                    let k = i + f;
-                    let m = j - g;
-
-                    // offsets_rm.write(n_rm, g as u8);
-                    // offsets_lm.write(n_lm, f as u8);
-
-                    tmp.select(k);
-                    let swap_rm = is_less(tmp.element(), high.element());
-                    // n_rm += swap_rm as u8;
-                    tmp.swap(m);
-                    let swap_lm = is_less(low.element(), tmp.get(k));
-                    // n_lm += swap_lm as u8;
-
-                    if swap_rm {
-                        tmp.select(m);
-                        tmp.swap(q);
-                        q -= 1;
-                    }
-
-                    if swap_lm {
-                        tmp.select(k);
-                        tmp.swap(p);
-                        p += 1;
-                    }
-                }
-                h += 1;
-            }
-
-            n_lr -= num;
-            n_rl -= num;
-            s_lr += num;
-            s_rl += num;
-        }
-
-        i += BLOCK * (n_lr == 0) as usize;
-        j -= BLOCK * (n_rl == 0) as usize;
-    }
-
-    // Process the remaining elements
-    i += (s_lr as usize) * (n_lr > 0) as usize;
-    j -= (s_rl as usize) * (n_rl > 0) as usize;
-    unsafe {
-        loop {
-            while i < j && is_less(tmp.get(i), low.element()) {
-                i += 1;
-            }
-            while i < j && is_less(high.element(), tmp.get(j)) {
-                j -= 1;
-            }
-            if i < j {
-                tmp.select(i);
-                tmp.swap(j);
-                if !is_less(tmp.get(i), low.element()) {
-                    tmp.select(i);
-                    tmp.swap(p);
-                    p += 1;
-                }
-                if !is_less(high.element(), tmp.get(j)) {
-                    tmp.select(j);
-                    tmp.swap(q);
-                    q -= 1;
-                }
-                i += 1;
-                j -= 1;
-            } else {
-                break;
-            }
-        }
-        while i < n && is_less(tmp.get(i), low.element()) {
-            i += 1;
-        }
-        while j > 0 && is_less(high.element(), tmp.get(j)) {
-            j -= 1;
-        }
-        if i == j {
-            tmp.select(i);
-            if !is_less(tmp.element(), low.element()) && !is_less(high.element(), tmp.element()) {
-                tmp.swap(p);
-                p += 1;
-                i += 1;
-            }
-        }
-    }
-
-    //  Move the temporary parts to the middle:
-    //  ┌─────────────────┬───────┬────────┬──────────────────┐
-    //  │low <= .. < high │ < low │ > high │ low < .. <= high │
-    //  └─────────────────┴───────┴────────┴──────────────────┘
-    //   0                 p     j i      q                    n
-
-    let s_lm = p.min(i - p);
-    let s_rm = (n - q - 1).min(q + 1 - i);
-
-    unordered_swap(middle, 0, j, s_lm);
-    unordered_swap(middle, i, n - 1, s_rm);
-
-    // let (left, right) = middle.split_at_mut(i);
-
-    // let (left_a, tail) = left.split_at_mut(s_lm);
-    // let (_, left_b) = tail.split_at_mut(tail.len() - s_lm);
-    // left_a.swap_with_slice(left_b);
-
-    // let (right_a, tail) = right.split_at_mut(s_rm);
-    // let (_, right_b) = tail.split_at_mut(tail.len() - s_rm);
-    // right_a.swap_with_slice(right_b);
-
-    let u = i - p;
-    let v = i + n - q;
-    unsafe {
-        low.set(u);
-        high.set(v);
-    }
-    (u, v)
-}
-
-/// Partitions the slice into three parts using the element at index `p` as the pivot. Returns
-/// the indices of the first and last elements of equal to the pivot.
-///
-/// Using `(u, v)` to denote the indices returned by the function, the slice is partitioned as
-/// follows:
-/// ```text
-/// ┌───────────┬────────────┬───────────┐
-/// │ < data[u] │ == data[u] │ > data[u] │
-/// └───────────┴────────────┴───────────┘
-///              u          v
-/// ```
-///
-/// Panics if the slice is empty or if `p` is out of bounds.
-fn lomuto_trinity<T, F>(data: &mut [T], p: usize, is_less: &mut F) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    data.swap(0, p);
-    let (head, tail) = data.split_first_mut().unwrap();
-    let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
-    let pivot = &*tmp;
-
-    let (mut l, mut r, e);
-    unsafe {
-        l = tail.as_mut_ptr();
-        e = l.add(tail.len());
-        r = e.sub(1);
-        while l < r && is_less(&*l, pivot) {
-            l = l.add(1)
-        }
-        while l < r && !is_less(&*r, pivot) {
-            r = r.sub(1);
-        }
-    }
-
-    let (mut i, mut j, mut k) = (l, l, l);
-
-    const BLOCK: usize = 128;
-    let mut offsets: [MaybeUninit<u8>; BLOCK] = [MaybeUninit::uninit(); BLOCK];
-
-    let mut num_lt: u8 = 0;
-    let mut num_le: u8 = 0;
-    let mut h: u8 = 0;
-
-    while k < e {
-        let size = unsafe { (e.offset_from(k) as usize).min(BLOCK) as u8 };
-
-        //                                | block |
-        // ┌─────────┬──────────┬─────────┬─────────────┐
-        // │ < pivot │ == pivot │ > pivot │   ? .. ?    │
-        // └─────────┴──────────┴─────────┴─────────────┘
-        //            i          j         k
-
-        // Scan the block beginning at k and store the offsets to elements <= pivot.
-        while h < size {
-            unsafe {
-                let elem = &*k.add(h as usize);
-                offsets.get_unchecked_mut(num_le as usize).write(h);
-                num_le += !is_less(pivot, elem) as u8;
-            }
-            h += 1;
-        }
-        h = 0;
-
-        // Swap each element <= pivot with the first element > pivot and store the offsets to
-        // elements < pivot.
-        unsafe {
-            let mut m = offsets.get_unchecked_mut(0).as_mut_ptr();
-            while h < num_le {
-                let elem = k.add(*m as usize);
-                offsets.get_unchecked_mut(num_lt as usize).write(h);
-                num_lt += is_less(&*elem, pivot) as u8;
-                let other = j.add(h as usize);
-                ptr::swap(elem, other);
-                m = m.add(1);
-                h += 1;
-            }
-        }
-        h = 0;
-
-        // Swap each element < pivot with the first element >= pivot.
-        unsafe {
-            let mut m = offsets.get_unchecked_mut(0).as_mut_ptr();
-            while h < num_lt {
-                let elem = j.add(*m as usize);
-                let other = i.add(h as usize);
-                ptr::swap(elem, other);
-                m = m.add(1);
-                h += 1;
-            }
-        }
-        h = 0;
-
-        // Increment the indices
-        unsafe {
-            k = k.add(size as usize);
-            j = j.add(num_le as usize);
-            i = i.add(num_lt as usize);
-        }
-
-        // Reset the counters
-        (num_le, num_lt) = (0, 0);
-
-        // The first part contains elements x < pivot.
-        // debug_assert!(data[..i].iter().all(|x| is_less(x, pivot.element())));
-
-        // The middle part contains elements x == pivot.
-        // debug_assert!(data[i..j].iter().all(|x| !is_less(x, pivot.element())));
-        // debug_assert!(data[i..j].iter().all(|x| !is_less(pivot.element(), x)));
-
-        // The last part contains elements x > pivot. Elements after k have not been scanned
-        // yet and are unordered.
-        // debug_assert!(data[j..k].iter().all(|x| is_less(pivot, x)));
-    }
-    unsafe {
-        let u = i.offset_from(head) as usize - 1;
-        let v = j.offset_from(head) as usize - 1;
-        i = i.sub(1);
-        ptr::swap(head, i);
-        (u, v)
-    }
-}
-
 /// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
 /// where `u` is the number of elements less than the pivot, and the index of the pivot after
 /// partitioning.
@@ -1057,7 +457,7 @@ where
 /// ┌───────────┬───────────────────────────┬────────────┐
 /// │ < data[u] │ data[u] == ... == data[v] │ >= data[u] │
 /// └───────────┴───────────────────────────┴────────────┘
-///              u                         v 
+///              u                         v
 /// ```
 ///
 /// Panics if `index` is out of bounds.
@@ -1069,7 +469,7 @@ where
     let (head, tail) = data.split_first_mut().unwrap();
     let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
     let pivot = &*tmp;
-    let (u,v) = partition_in_blocks_dual(tail, pivot, pivot, is_less);
+    let (u, v) = partition_in_blocks_dual(tail, pivot, pivot, is_less);
     data.swap(0, u);
     (u, v)
 }

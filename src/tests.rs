@@ -1,7 +1,6 @@
 use crate::{
-    floyd_rivest_select, hoare_dyad, hoare_trinity, lomuto_trinity, median_5,
-    partition_in_blocks_dual, pcg_rng::PCGRng, quickselect, sample, select_min,
-    select_nth_unstable, sort_2, sort_3, sort_4,
+    floyd_rivest_select, median_5, partition_in_blocks_dual, pcg_rng::PCGRng, quickselect, sample,
+    select_min, select_nth_unstable, sort_2, sort_3, sort_4,
 };
 
 fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -16,7 +15,6 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
     }
 }
 
-
 #[cfg(feature = "perf-test")]
 /// Generates the test data of `count` random `u32` values.
 fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
@@ -26,7 +24,6 @@ fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
     }
     data
 }
-
 
 #[cfg(feature = "perf-test")]
 /// Run the `test` closure repeatedly for at least `duration` seconds, timing each run. The
@@ -76,51 +73,6 @@ fn print_timings(times: &[f32]) {
 }
 
 #[test]
-fn hoare_2() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let count = 300;
-    let mut rng = PCGRng::new(0);
-
-    for iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-
-        let p = iter % count;
-        let pivot = data[p];
-
-        let (u, v) = hoare_dyad(&mut data, p, &mut usize::lt);
-
-        assert!(data[..u].iter().all(|elem| elem < &pivot));
-        assert!(data[u..=v].iter().all(|elem| elem == &pivot));
-        assert!(data[v + 1..].iter().all(|elem| elem >= &pivot));
-    }
-}
-
-#[test]
-fn hoare_3() {
-    let repeat = 1000;
-    let count = 300;
-    let mut rng = PCGRng::new(123);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = (0..count).collect();
-        shuffle(data.as_mut_slice(), rng.as_mut());
-
-        let (p, q) = (count / 3, 2 * count / 3);
-
-        let (u, v) = hoare_trinity(data.as_mut_slice(), p, q, &mut usize::lt);
-        let (low, high) = (&data[u], &data[v]);
-
-        assert!(data[..u].iter().all(|elem| elem < low));
-        assert!(data[u..=v].iter().all(|elem| low <= elem && elem <= high));
-        assert!(data[v + 1..].iter().all(|elem| elem > high));
-    }
-}
-
-#[test]
 fn block_dual() {
     let repeat = 1000;
     let max_count = 30;
@@ -136,34 +88,10 @@ fn block_dual() {
 
         let (low, high) = if x < y { (&x, &y) } else { (&y, &x) };
         let (u, v) = partition_in_blocks_dual(data.as_mut_slice(), low, high, &mut usize::lt);
-    
+
         assert!(data[..u].iter().all(|elem| elem < low));
         assert!(data[u..v].iter().all(|elem| low <= elem && elem <= high));
         assert!(data[v..].iter().all(|elem| elem > high));
-    }
-}
-
-#[test]
-fn lomuto_3() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let count = 300;
-    let mut rng = PCGRng::new(0);
-
-    for iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-
-        let p = iter % count;
-        let pivot = data[p];
-
-        let (u, v) = lomuto_trinity(&mut data, p, &mut usize::lt);
-
-        assert!(data[..u].iter().all(|elem| elem < &pivot));
-        assert!(data[u..=v].iter().all(|elem| elem == &pivot));
-        assert!(data[v + 1..].iter().all(|elem| elem > &pivot));
     }
 }
 
@@ -176,7 +104,7 @@ fn floyd_rivest_300() {
 
     let count = 300;
     let mut k = 0;
-    let mut rng = PCGRng::new(0);
+    let mut rng = PCGRng::new(123);
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
@@ -293,15 +221,22 @@ fn nth_small() {
 }
 
 #[test]
-fn sample_10() {
-    let len = 20;
-    let count = 10;
-    let mut rng = PCGRng::new(0);
-    let mut data: Vec<_> = (0..len).collect();
+fn sample_n() {
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
 
-    sample(data.as_mut_slice(), count, rng.as_mut());
-    for i in 0..len {
-        assert!(data.contains(&i));
+    let len = 20;
+    let mut rng = PCGRng::new(0);
+
+    for _iter in 0..repeat {
+        let count = rng.bounded_usize(1, len + 1);
+        let mut data: Vec<_> = (0..len).collect();
+        sample(data.as_mut_slice(), count, rng.as_mut());
+        for i in 0..len {
+            assert!(data.contains(&i));
+        }
     }
 }
 
