@@ -118,7 +118,13 @@ where
     let (low, _high) = floyd_rivest_select(sample, index, is_less, rng);
     low
 }
-
+/// Selects two pivots as part of the Floyd & Rivest algorithm. 
+/// 
+/// First, determines the sample size and the positions of the pivots in the sample is determined. 
+/// Then, a random sample of elements is taken from the data and the pivots are found. Finally, the
+/// already partitioned elements are moved to the beginning and end of the slice.
+/// 
+/// Returns a tuple containing the positions of the pivots.
 fn prepare_dual<T, F>(
     data: &mut [T],
     index: usize,
