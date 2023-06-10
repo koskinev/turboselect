@@ -6,6 +6,9 @@ use std::mem::ManuallyDrop;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod benches;
+
 const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
 const CUT: usize = 250000;
@@ -274,8 +277,9 @@ fn unordered_swap<T>(data: &mut [T], left: usize, right: usize, count: usize) {
         r.write(ManuallyDrop::into_inner(tmp));
     }
 }
-// Reorders the slice so that the element at `index` is at its sorted position. Returns the
-// indices of the first and last elements equal to the element at `index`.
+
+/// Reorders the slice so that the element at `index` is at its sorted position. Returns the
+/// indices of the first and last elements equal to the element at `index`.
 fn floyd_rivest_select<T, F>(
     mut data: &mut [T],
     mut index: usize,
