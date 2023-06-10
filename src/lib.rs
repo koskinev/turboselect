@@ -87,8 +87,11 @@ where
     (v, v)
 }
 
-/// For the given index and slice length, returns `(size, p, q)`, where `size` is the sample size
-/// and `p` and `q` are the pivot positions
+/// For the given index and slice length, determines the sample size and the positions of the pivots
+/// in the sample with a high probability that the `index`th element is between the two pivots.
+///
+/// Returns `(size, p, q)`, where `size` is the sample size  and `p` and `q` are the pivot positions
+/// in the sample.
 fn sample_parameters(index: usize, n: usize) -> (usize, usize, usize) {
     let index = index as f64;
     let n = n as f64;
@@ -121,12 +124,12 @@ where
     let (low, _high) = floyd_rivest_select(sample, index, is_less, rng);
     low
 }
-/// Selects two pivots as part of the Floyd & Rivest algorithm. 
-/// 
-/// First, determines the sample size and the positions of the pivots in the sample is determined. 
+/// Selects two pivots as part of the Floyd & Rivest algorithm.
+///
+/// First, determines the sample size and the positions of the pivots in the sample is determined.
 /// Then, a random sample of elements is taken from the data and the pivots are found. Finally, the
 /// already partitioned elements are moved to the beginning and end of the slice.
-/// 
+///
 /// Returns a tuple containing the positions of the pivots.
 fn prepare_dual<T, F>(
     data: &mut [T],
