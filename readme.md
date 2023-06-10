@@ -1,10 +1,8 @@
 # Turboselect
 
-An alternative implementation of the `slice::select_nth_unstable` method based on the Floyd & Rivest SELECT algorithm. 
+An alternative implementation of the `slice::select_nth_unstable` method based on the Floyd & Rivest SELECT algorithm, demonstrating that the Floyd & Rivest algorithm can be faster than well implemented quickselect. The speed improvements are most noticeable for indices far from the median. Note that the code relies heavily on unsafe code and currently not thoroughly tested. 
 
-This repository demonstrates that the Floyd & Rivest algorithm can be more efficient than a well implemented quickselect implementation. The speed improvements are most noticeable for indices far from the median.
-
-The code is currently not well tested and should not be used in production.
+To run the tests, use `cargo test` and `cargo +nightly miri test`.
 
 **Comparison with  `slice::select_nth_unstable` as the baseline using random `u32` data**
 
@@ -46,4 +44,4 @@ being between the pivots. The elements that are between the pivots are then move
 Finally, the elements from the beginning and the end are moved to the middle, resulting in the final partitioning.
 
 
-[1] Kiwiel, Krzysztof C. (30 November 2005). "On Floyd and Rivest's SELECT algorithm" (PDF). Theoretical Computer Science. 347 (1–2): 214–238. [doi:10.1016/j.tcs.2005.06.032](https://doi.org/10.1016%2Fj.tcs.2005.06.032).
+[1] Kiwiel, Krzysztof C. (30 November 2005). "On Floyd and Rivest's SELECT algorithm". Theoretical Computer Science. 347 (1–2): 214–238. [doi:10.1016/j.tcs.2005.06.032](https://doi.org/10.1016%2Fj.tcs.2005.06.032).
