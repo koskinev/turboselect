@@ -194,7 +194,7 @@ fn perf_tests() {
     where
         P: FnMut(usize, &mut PCGRng) -> Vec<u32> + Copy,
     {
-        let counts = [100_000_000, 1_000_000, 10_000];
+        let counts = [10_000, 1_000_000, 100_000_000];
         let p50 = |count: usize| count / 2;
         let p25 = |count: usize| count / 4;
         let p01 = |count: usize| count / 100;
@@ -218,8 +218,8 @@ fn perf_tests() {
     }
 
     run("random_u32s", random_u32s, &mut runs);
-    run("random_u32s_dups", random_u32s_dups, &mut runs);
-    run("sawtooth_u32s", sawtooth_u32s, &mut runs);
-    run("reversed_u32s", reversed_u32s, &mut runs);
-    run("shuffled_u32s", shuffled_u32s, &mut runs);
+    // run("random_u32s_dups", random_u32s_dups, &mut runs);
+    // run("sawtooth_u32s", sawtooth_u32s, &mut runs);
+    // run("reversed_u32s", reversed_u32s, &mut runs);
+    // run("shuffled_u32s", shuffled_u32s, &mut runs);
 }
