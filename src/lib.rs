@@ -41,11 +41,11 @@ fn select_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let mut elem = data.as_mut_ptr();
     if let Some((first, tail)) = data.split_first_mut() {
+        let mut elem = first as *mut T;
         let mut min_ptr = elem;
         unsafe {
-            elem = elem.add(1);
+            elem = tail.as_mut_ptr();
             let mut tmp = ManuallyDrop::new(ptr::read(first));
             let min = &mut *tmp;
             for _ in 0..tail.len() {
@@ -68,13 +68,13 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     let v = data.len() - 1;
-    let mut elem = data.as_mut_ptr();
-    if let Some((last, tail)) = data.split_last_mut() {
+    if let Some((last, head)) = data.split_last_mut() {
+        let mut elem = head.as_mut_ptr();
+        let mut max_ptr = last as *mut T;
         unsafe {
-            let mut max_ptr = elem.add(v);
             let mut tmp = ManuallyDrop::new(ptr::read(last));
             let max = &mut *tmp;
-            for _ in 0..tail.len() {
+            for _ in 0..head.len() {
                 if is_less(max, &*elem) {
                     *max = ptr::read(elem);
                     max_ptr = elem;
@@ -210,9 +210,10 @@ where
 
     // NB: The branchless version doesn't seem to be any faster than this.
     unsafe {
-        let a = data.get_unchecked_mut(a) as *mut T;
-        let b = data.get_unchecked_mut(b);
-        let swap = is_less(b, &*a);
+        let ptr = data.as_mut_ptr();
+        let a = ptr.add(a);
+        let b = ptr.add(b);
+        let swap = is_less(&*b, &*a);
         if swap {
             ptr::swap(a, b);
         }
@@ -1065,7 +1066,9 @@ where
                 r = r.offset(-1);
             }
         }
-        l = unsafe { r.offset(-1) };
+        if r > s {
+            l = unsafe { r.sub(1) };
+        }
     } else if start_r < end_r {
         // The right block remains.
         // Move its remaining out-of-order elements to the far left.
@@ -1082,10 +1085,14 @@ where
                 l = l.offset(1);
             }
         }
-        r = unsafe { l.add(1) };
+        if l < e {
+            r = unsafe { l.add(1) };
+        }
     } else {
         // Nothing else to do, we're done.
-        r = unsafe { l.add(1) };
+        if l < e {
+            r = unsafe { l.add(1) };
+        }
     }
 
     unsafe {
