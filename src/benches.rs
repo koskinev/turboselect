@@ -128,9 +128,6 @@ fn bench<D, P: FnMut() -> D, A: FnMut(D), B: FnMut(D)>(
     use std::hint::black_box;
     use std::time::Instant;
 
-    eprintln!("Running the function for at least {duration:.2} seconds. The runs are randomly interleaved.");
-    eprintln!("Data preparation is ignored in the timing.");
-
     let mut times = Vec::new();
     let mut times_baseline = Vec::new();
     let mut total = 0.0;
@@ -168,7 +165,6 @@ where
 {
     let mut rng = PCGRng::new(1234);
     let label = label.into();
-    eprintln!("Testing {} ...", label);
     let (timings, baseline) = bench(
         || prep(count, rng.as_mut()),
         |mut data| {
@@ -189,11 +185,15 @@ where
 fn perf_tests() {
     // cargo test -r perf_tests -- --nocapture --ignored
 
-    fn run<P>(label: &str, prep: P)
+    let mut runs = Vec::new();
+    const DURATION: f32 = 5.0;
+    eprintln!("Running each test for at least {DURATION:.2} seconds. The tests and the baseline runs are randomly interleaved.");
+    eprintln!("Data preparation is ignored in the timing.");
+
+    fn run<P>(label: &str, prep: P, runs: &mut Vec<Comparison>)
     where
         P: FnMut(usize, &mut PCGRng) -> Vec<u32> + Copy,
     {
-        let duration = 5.0;
         let counts = [100_000_000, 1_000_000, 10_000];
         let p50 = |count: usize| count / 2;
         let p25 = |count: usize| count / 4;
@@ -201,22 +201,25 @@ fn perf_tests() {
 
         for count in counts {
             let index = p01(count);
-            let label = format!("{label} (count = {count}, index = {index})",);
-            compare(&label, prep, count, index, duration);
+            let run_label = format!("{label} (count = {count}, index = {index})",);
+            let run = compare(&run_label, prep, count, index, DURATION);
+            runs.push(run);
 
             let index = p25(count);
-            let label = format!("{label} (count = {count}, index = {index})",);
-            compare(&label, prep, count, index, duration);
-            
+            let run_label = format!("{label} (count = {count}, index = {index})",);
+            let run = compare(&run_label, prep, count, index, DURATION);
+            runs.push(run);
+
             let index = p50(count);
-            let label = format!("{label} (count = {count}, index = {index})",);
-            compare(&label, prep, count, index, duration);
+            let run_label = format!("{label} (count = {count}, index = {index})",);
+            let run = compare(&run_label, prep, count, index, DURATION);
+            runs.push(run);
         }
     }
 
-    run("random_u32s", random_u32s);
-    run("shuffled_u32s", shuffled_u32s);
-    run("sawtooth_u32s", sawtooth_u32s);
-    run("reversed_u32s", reversed_u32s);
-    run("random_u32s_dups", random_u32s_dups);
+    run("random_u32s", random_u32s, &mut runs);
+    run("random_u32s_dups", random_u32s_dups, &mut runs);
+    run("sawtooth_u32s", sawtooth_u32s, &mut runs);
+    run("reversed_u32s", reversed_u32s, &mut runs);
+    run("shuffled_u32s", shuffled_u32s, &mut runs);
 }
