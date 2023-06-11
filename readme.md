@@ -18,7 +18,7 @@ To run the tests, use `cargo test` and `cargo +nightly miri test`.
 | 100 000 000  | 25 000 000 | 12.269             | 8.637            | 1.421 |
 | 100 000 000  | 50 000 000 | 11.014             | 8.098            | 1.360 |
 
-The benchmarks can be run with `cargo test -r perf_tests -- --nocapture --ignored`.
+The benchmarks were run on a Ryzen 5800H. You can run the benchmarks with `cargo test -r perf_tests -- --nocapture --ignored`.
 
 ## Notes
 
