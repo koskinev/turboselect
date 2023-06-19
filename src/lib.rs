@@ -1,6 +1,6 @@
-mod pcg_rng;
+mod wyrand;
 use core::{mem::MaybeUninit, ptr};
-use pcg_rng::PCGRng;
+use wyrand::WyRng;
 use std::mem::ManuallyDrop;
 
 #[cfg(test)]
@@ -103,7 +103,7 @@ fn sample_parameters(index: usize, n: usize) -> (usize, usize, usize) {
     (size as usize, p, q)
 }
 
-fn prepare<T, F>(data: &mut [T], index: usize, is_less: &mut F, rng: &mut PCGRng) -> usize
+fn prepare<T, F>(data: &mut [T], index: usize, is_less: &mut F, rng: &mut WyRng) -> usize
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -135,7 +135,7 @@ fn prepare_dual<T, F>(
     data: &mut [T],
     index: usize,
     is_less: &mut F,
-    rng: &mut PCGRng,
+    rng: &mut WyRng,
 ) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
@@ -170,7 +170,7 @@ where
 
 /// Takes a `count` element random sample from the slice, placing it into the beginning of the
 /// slice. Returns the sample as a slice.
-fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [T] {
+fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T] {
     let len = data.len();
     assert!(count <= len);
     unsafe {
@@ -190,7 +190,7 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut PCGRng) -> &'a mut [
 }
 
 pub fn select_nth_unstable<T: Ord>(data: &mut [T], index: usize) -> &T {
-    let mut rng = PCGRng::new(0);
+    let mut rng = WyRng::new(0);
     if data.len() < CUT {
         quickselect(data, index, &mut T::lt, rng.as_mut());
     } else {
@@ -288,7 +288,7 @@ fn floyd_rivest_select<T, F>(
     mut data: &mut [T],
     mut index: usize,
     is_less: &mut F,
-    rng: &mut PCGRng,
+    rng: &mut WyRng,
 ) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
@@ -352,7 +352,7 @@ fn quickselect<T, F>(
     mut data: &mut [T],
     mut index: usize,
     is_less: &mut F,
-    rng: &mut PCGRng,
+    rng: &mut WyRng,
 ) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,

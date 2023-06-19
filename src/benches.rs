@@ -1,6 +1,6 @@
-use crate::{pcg_rng::PCGRng, select_nth_unstable};
+use crate::{select_nth_unstable, wyrand::WyRng};
 
-fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
+fn shuffle<T>(data: &mut [T], rng: &mut WyRng) {
     let len = data.len();
     let ptr = data.as_mut_ptr();
     for i in 0..len - 1 {
@@ -14,7 +14,7 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
 }
 
 /// Returns a vector of `count` random `u32` values.
-fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
+fn random_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
     let mut data = Vec::with_capacity(count);
     while data.len() < count {
         data.push(rng.u32());
@@ -23,7 +23,7 @@ fn random_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
 }
 
 /// Returns a vector of `count` random `u32` values in the range `0..sqrt(count)`.
-fn random_u32s_dups(count: usize, rng: &mut PCGRng) -> Vec<u32> {
+fn random_u32s_dups(count: usize, rng: &mut WyRng) -> Vec<u32> {
     let mut data = Vec::with_capacity(count);
     let sqrt_count = (count as f64).sqrt() as u32;
     while data.len() < count {
@@ -33,19 +33,19 @@ fn random_u32s_dups(count: usize, rng: &mut PCGRng) -> Vec<u32> {
 }
 
 /// Returns a vector of integers in the range `0..count`, in reversed order.
-fn reversed_u32s(count: usize, _rng: &mut PCGRng) -> Vec<u32> {
+fn reversed_u32s(count: usize, _rng: &mut WyRng) -> Vec<u32> {
     (0..count as u32).rev().collect()
 }
 
 /// Returns a vector of `u32`s in the range `0..count`, in random order.
-fn shuffled_u32s(count: usize, rng: &mut PCGRng) -> Vec<u32> {
+fn shuffled_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
     let mut data: Vec<_> = (0..count as u32).collect();
     shuffle(&mut data, rng);
     data
 }
 
 /// Returns a vector of `u32`s with a sawtooth pattern.
-fn sawtooth_u32s(count: usize, _rng: &mut PCGRng) -> Vec<u32> {
+fn sawtooth_u32s(count: usize, _rng: &mut WyRng) -> Vec<u32> {
     let mut data = Vec::with_capacity(count);
     let count = count as u32;
     let sqrt_count = (count as f64).sqrt() as u32;
@@ -131,7 +131,7 @@ fn bench<D, P: FnMut() -> D, A: FnMut(D), B: FnMut(D)>(
     let mut times = Vec::new();
     let mut times_baseline = Vec::new();
     let mut total = 0.0;
-    let mut rng = PCGRng::new(0);
+    let mut rng = WyRng::new(0);
     while total < duration {
         let data = prep();
         if rng.u64() < u64::MAX / 2 {
@@ -160,10 +160,10 @@ fn compare<P, T>(
     duration: f32,
 ) -> Comparison
 where
-    P: FnMut(usize, &mut PCGRng) -> Vec<T>,
+    P: FnMut(usize, &mut WyRng) -> Vec<T>,
     T: Ord,
 {
-    let mut rng = PCGRng::new(1234);
+    let mut rng = WyRng::new(1234);
     let label = label.into();
     let (timings, baseline) = bench(
         || prep(count, rng.as_mut()),
@@ -192,7 +192,7 @@ fn perf_tests() {
 
     fn run<P>(label: &str, prep: P, runs: &mut Vec<Comparison>)
     where
-        P: FnMut(usize, &mut PCGRng) -> Vec<u32> + Copy,
+        P: FnMut(usize, &mut WyRng) -> Vec<u32> + Copy,
     {
         let counts = [10_000, 1_000_000, 100_000_000];
         let p50 = |count: usize| count / 2;

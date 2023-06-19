@@ -1,13 +1,13 @@
 use crate::{
-    floyd_rivest_select, median_5, partition_in_blocks_dual, pcg_rng::PCGRng, quickselect, sample,
+    floyd_rivest_select, median_5, partition_in_blocks_dual, wyrand::WyRng, quickselect, sample,
     select_min, select_nth_unstable, sort_2, sort_3, sort_4,
 };
 
-fn iter_rng(rng: &mut PCGRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
+fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
     std::iter::from_fn(move || Some(rng.bounded_usize(0, high))).take(count)
 }
 
-fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
+fn shuffle<T>(data: &mut [T], rng: &mut WyRng) {
     let len = data.len();
     for i in 0..len - 1 {
         let j = rng.bounded_usize(i, len);
@@ -18,7 +18,7 @@ fn shuffle<T>(data: &mut [T], rng: &mut PCGRng) {
 fn block_dual() {
     let repeat = 1000;
     let max_count = 30;
-    let mut rng = PCGRng::new(123);
+    let mut rng = WyRng::new(123);
 
     for _iter in 0..repeat {
         let count = rng.bounded_usize(1, max_count);
@@ -46,7 +46,7 @@ fn floyd_rivest_300() {
 
     let count = 300;
     let mut k = 0;
-    let mut rng = PCGRng::new(123);
+    let mut rng = WyRng::new(123);
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
@@ -63,7 +63,7 @@ fn floyd_rivest_300() {
 
 #[test]
 fn large_median() {
-    let mut pcg = PCGRng::new(123);
+    let mut pcg = WyRng::new(123);
 
     #[cfg(not(miri))]
     let count = 10_000_000;
@@ -82,7 +82,7 @@ fn large_median() {
 
 #[test]
 fn extreme_index() {
-    let mut pcg = PCGRng::new(123);
+    let mut pcg = WyRng::new(123);
 
     #[cfg(not(miri))]
     let count = 10_000_000;
@@ -119,7 +119,7 @@ fn nth() {
     #[cfg(miri)]
     let max = 1000;
 
-    let mut pcg = PCGRng::new(0);
+    let mut pcg = WyRng::new(0);
 
     for _iter in 0..repeat {
         let count = pcg.bounded_usize(1, max);
@@ -145,7 +145,7 @@ fn nth_small() {
     let repeat = 1;
 
     let max = 1000;
-    let mut pcg = PCGRng::new(123);
+    let mut pcg = WyRng::new(123);
 
     for _iter in 0..repeat {
         let count = pcg.bounded_usize(1, max);
@@ -170,7 +170,7 @@ fn sample_n() {
     let repeat = 1;
 
     let len = 20;
-    let mut rng = PCGRng::new(0);
+    let mut rng = WyRng::new(0);
 
     for _iter in 0..repeat {
         let count = rng.bounded_usize(1, len + 1);
@@ -185,7 +185,7 @@ fn sample_n() {
 #[test]
 fn min_10() {
     let len = 10;
-    let mut rng = PCGRng::new(0);
+    let mut rng = WyRng::new(0);
 
     #[cfg(not(miri))]
     let repeat = 1000;
@@ -218,7 +218,7 @@ fn sort3() {
     let repeat = 1;
 
     let count = 3;
-    let mut rng = PCGRng::new(0);
+    let mut rng = WyRng::new(0);
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
@@ -236,7 +236,7 @@ fn sort4() {
     let repeat = 1;
 
     let count = 4;
-    let mut rng = PCGRng::new(0);
+    let mut rng = WyRng::new(0);
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
@@ -255,7 +255,7 @@ fn median5() {
     let repeat = 1;
 
     let count = 5;
-    let mut rng = PCGRng::new(0);
+    let mut rng = WyRng::new(0);
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
