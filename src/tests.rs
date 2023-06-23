@@ -1,6 +1,7 @@
 use crate::{
-    floyd_rivest_select, median_5, partition_in_blocks_dual, wyrand::WyRng, quickselect, sample,
-    select_min, select_nth_unstable, sort_2, sort_3, sort_4,
+    partition_in_blocks_dual, quickselect, sample, select_min, select_nth_unstable,
+    sort::{median, sort},
+    wyrand::WyRng,
 };
 
 fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -16,7 +17,12 @@ fn shuffle<T>(data: &mut [T], rng: &mut WyRng) {
 }
 #[test]
 fn block_dual() {
+    #[cfg(not(miri))]
     let repeat = 1000;
+
+    #[cfg(miri)]
+    let repeat = 100;
+
     let max_count = 30;
     let mut rng = WyRng::new(123);
 
@@ -38,30 +44,6 @@ fn block_dual() {
 }
 
 #[test]
-fn floyd_rivest_300() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let count = 300;
-    let mut k = 0;
-    let mut rng = WyRng::new(123);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        let (u, v) = floyd_rivest_select(&mut data, k, &mut usize::lt, &mut rng);
-        assert!(u <= k && v >= k && v < count);
-        let kth = data[k];
-        assert_eq!(data[u], kth);
-        assert_eq!(data[v], kth);
-        assert!(data[..k].iter().all(|elem| elem <= &kth));
-        assert!(data[k..].iter().all(|elem| elem >= &kth));
-        k = (k + 1) % count;
-    }
-}
-
-#[test]
 fn large_median() {
     let mut pcg = WyRng::new(123);
 
@@ -74,10 +56,39 @@ fn large_median() {
 
     let mut data: Vec<usize> = (0..count).collect();
     shuffle(data.as_mut_slice(), &mut pcg);
-    let median = select_nth_unstable(data.as_mut_slice(), mid);
+    let (left, median, right) = select_nth_unstable(data.as_mut_slice(), mid);
     assert_eq!(median, &mid);
-    assert!(data[..mid].iter().all(|elem| elem < &mid));
-    assert!(data[mid + 1..].iter().all(|elem| elem > &mid));
+    assert!(left.iter().all(|elem| elem < &mid));
+    assert!(right.iter().all(|elem| elem > &mid));
+}
+
+#[test]
+fn sawtooth_median() {
+    let mut rng = WyRng::new(123);
+
+    #[cfg(not(miri))]
+    let count = 10_000;
+    #[cfg(miri)]
+    let count = 1000;
+
+    let index = count / 1000;
+
+    /// Returns a vector of `u32`s with a sawtooth pattern.
+    fn sawtooth(count: usize, _rng: &mut WyRng) -> Vec<usize> {
+        let mut data = Vec::with_capacity(count);
+        let count = count;
+        let sqrt_count = (count as f64).sqrt() as usize;
+        for index in 0..count {
+            let x = index % sqrt_count;
+            data.push(x);
+        }
+        data
+    }
+
+    let mut data = sawtooth(count, rng.as_mut());
+    let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
+    assert!(left.iter().all(|elem| elem <= nth));
+    assert!(right.iter().all(|elem| elem >= nth));
 }
 
 #[test]
@@ -93,18 +104,18 @@ fn extreme_index() {
 
     let mut data: Vec<usize> = (0..count).collect();
     shuffle(data.as_mut_slice(), &mut pcg);
-    let nth = *select_nth_unstable(data.as_mut_slice(), index);
+    let (left, &mut nth, right) = select_nth_unstable(data.as_mut_slice(), index);
 
-    assert!(data[..index].iter().all(|elem| elem < &nth));
-    assert_eq!(data[index], nth);
-    assert!(data[index + 1..].iter().all(|elem| elem > &nth));
+    assert!(left.iter().all(|elem| elem < &nth));
+    assert!(right.iter().all(|elem| elem > &nth));
+    assert_eq!(nth, data[index]);
 
     let index = count - 42;
-    let nth = *select_nth_unstable(data.as_mut_slice(), index);
+    let (left, &mut nth, right) = select_nth_unstable(data.as_mut_slice(), index);
 
-    assert!(data[..index].iter().all(|elem| elem < &nth));
-    assert_eq!(data[index], nth);
-    assert!(data[index + 1..].iter().all(|elem| elem > &nth));
+    assert!(left.iter().all(|elem| elem < &nth));
+    assert!(right.iter().all(|elem| elem > &nth));
+    assert_eq!(nth, data[index]);
 }
 
 #[test]
@@ -153,10 +164,8 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
         let index = pcg.bounded_usize(0, count);
-        let (u, v) = quickselect(&mut data, index, &mut usize::lt, &mut pcg);
+        quickselect(&mut data, index, &mut usize::lt, &mut pcg);
         let nth = data[index];
-        assert_eq!(data[u], nth);
-        assert_eq!(data[v], nth);
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
     }
@@ -205,8 +214,7 @@ fn min_10() {
 #[test]
 fn sort2() {
     let mut data = [1, 0];
-    let swapped = sort_2(data.as_mut_slice(), 0, 1, &mut i32::lt);
-    assert!(swapped);
+    sort(data.as_mut_slice(), [0, 1], &mut i32::lt);
     assert_eq!(data, [0, 1]);
 }
 
@@ -222,7 +230,7 @@ fn sort3() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_3(&mut data, 0, 1, 2, &mut usize::lt);
+        sort(&mut data, [0, 1, 2], &mut usize::lt);
         assert!(data[0] <= data[1]);
         assert!(data[1] <= data[2]);
     }
@@ -240,10 +248,54 @@ fn sort4() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_4(&mut data, 0, 1, 2, 3, &mut usize::lt);
+        sort(&mut data, [0, 1, 2, 3], &mut usize::lt);
         assert!(data[0] <= data[1]);
         assert!(data[1] <= data[2]);
         assert!(data[2] <= data[3]);
+    }
+}
+
+#[test]
+fn sort9() {
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
+    let mut rng = WyRng::new(0);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(&mut rng, 9, 9).collect();
+        sort(
+            &mut data,
+            core::array::from_fn::<_, 9, _>(|i| i),
+            &mut usize::lt,
+        );
+        for i in 1..9 {
+            assert!(data[i - 1] <= data[i]);
+        }
+    }
+}
+
+#[test]
+fn sort21() {
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
+    let mut rng = WyRng::new(0);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(&mut rng, 21, 21).collect();
+        sort(
+            &mut data,
+            core::array::from_fn::<_, 21, _>(|i| i),
+            &mut usize::lt,
+        );
+        for i in 1..21 {
+            assert!(data[i - 1] <= data[i]);
+        }
     }
 }
 
@@ -259,7 +311,7 @@ fn median5() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        median_5(&mut data, 0, 1, 2, 3, 4, &mut usize::lt);
+        median(&mut data, [0, 1, 2, 3, 4], &mut usize::lt);
         assert!(data[0] <= data[2]);
         assert!(data[1] <= data[2]);
         assert!(data[2] <= data[3]);
