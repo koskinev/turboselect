@@ -10,6 +10,11 @@ impl WyRng {
         self
     }
 
+    /// Returns a `bool`.
+    pub fn bool(&mut self) -> bool {
+        self.u64() > u64::MAX / 2
+    }
+
     /// Returns a `u8` in the range `[low, high)`.
     pub fn bounded_u8(&mut self, low: u8, high: u8) -> u8 {
         let range = high - low;
