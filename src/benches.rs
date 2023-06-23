@@ -1,17 +1,4 @@
-use crate::{select_nth_unstable, wyrand::WyRng};
-
-fn shuffle<T>(data: &mut [T], rng: &mut WyRng) {
-    let len = data.len();
-    let ptr = data.as_mut_ptr();
-    for i in 0..len - 1 {
-        let j = rng.bounded_usize(i, len);
-        unsafe {
-            let a = ptr.add(i);
-            let b = ptr.add(j);
-            std::ptr::swap(a, b);
-        }
-    }
-}
+use crate::{quickselect, wyrand::WyRng};
 
 /// Returns a vector of `count` random `u32` values.
 fn random_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
@@ -37,21 +24,24 @@ fn reversed_u32s(count: usize, _rng: &mut WyRng) -> Vec<u32> {
     (0..count as u32).rev().collect()
 }
 
-/// Returns a vector of `u32`s in the range `0..count`, in random order.
-fn shuffled_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
-    let mut data: Vec<_> = (0..count as u32).collect();
-    shuffle(&mut data, rng);
+/// Returns a vector of `u32`s with a sawtooth pattern.
+fn sawtooth_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
+    let mut data = Vec::with_capacity(count);
+    let count = count as u32;
+    let max_lenght = (count as f64).sqrt() as u32;
+    let length = rng.bounded_u32(max_lenght / 4, max_lenght);
+    for index in 0..count {
+        let x = index % length;
+        data.push(x);
+    }
     data
 }
 
-/// Returns a vector of `u32`s with a sawtooth pattern.
-fn sawtooth_u32s(count: usize, _rng: &mut WyRng) -> Vec<u32> {
+/// Returns a random boolean vector with `count` elements.
+fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
     let mut data = Vec::with_capacity(count);
-    let count = count as u32;
-    let sqrt_count = (count as f64).sqrt() as u32;
-    for index in 0..count {
-        let x = index % sqrt_count;
-        data.push(x);
+    while data.len() < count {
+        data.push(rng.bool());
     }
     data
 }
@@ -114,17 +104,22 @@ impl Comparison {
     }
 }
 
+const MIN_DURATION: f32 = 5.0;
+const MIN_RUNS: usize = 200;
+const MAX_RUNS: usize = 50_000;
+
 /// Runs `func` and `baseline` repeatedly with data prepared by `prep` until `func` has run for at
 /// least `duration` seconds. Prints the number of runs, the total time, and the average, minimum,
 /// and maximum times for each closure. Also prints the throughput of `func` relative to `baseline`.
 ///
 /// The `prep` closure is ignored in the timing.
-fn bench<D, P: FnMut() -> D, A: FnMut(D), B: FnMut(D)>(
+fn bench<D, P: FnMut() -> D, T: FnMut(&mut D), B: FnMut(&mut D), C: FnMut(D) -> bool>(
+    label: impl Into<String>,
     mut prep: P,
-    mut func: A,
+    mut test: T,
     mut baseline: B,
-    duration: f32,
-) -> (Timings, Timings) {
+    mut check: C,
+) -> Comparison {
     use std::hint::black_box;
     use std::time::Instant;
 
@@ -132,94 +127,100 @@ fn bench<D, P: FnMut() -> D, A: FnMut(D), B: FnMut(D)>(
     let mut times_baseline = Vec::new();
     let mut total = 0.0;
     let mut rng = WyRng::new(0);
-    while total < duration {
-        let data = prep();
+    while times.len() < MAX_RUNS && (total < MIN_DURATION || times.len() < MIN_RUNS) {
+        let mut data = prep();
         if rng.u64() < u64::MAX / 2 {
             let now = Instant::now();
-            func(black_box(data));
+            test(black_box(&mut data));
             let elapsed = now.elapsed().as_secs_f32();
             times.push(elapsed);
             total += elapsed;
+            assert!(black_box(check(data)));
         } else {
             let now = Instant::now();
-            baseline(black_box(data));
+            baseline(black_box(&mut data));
             let elapsed = now.elapsed().as_secs_f32();
             times_baseline.push(elapsed);
+            assert!(black_box(check(data)));
         }
     }
     let timings = Timings::from_times(&times);
     let timings_baseline = Timings::from_times(&times_baseline);
-    (timings, timings_baseline)
-}
-
-fn compare<P, T>(
-    label: impl Into<String>,
-    mut prep: P,
-    count: usize,
-    index: usize,
-    duration: f32,
-) -> Comparison
-where
-    P: FnMut(usize, &mut WyRng) -> Vec<T>,
-    T: Ord,
-{
-    let mut rng = WyRng::new(1234);
-    let label = label.into();
-    let (timings, baseline) = bench(
-        || prep(count, rng.as_mut()),
-        |mut data| {
-            select_nth_unstable(data.as_mut_slice(), index);
-        },
-        |mut data| {
-            data.select_nth_unstable(index);
-        },
-        duration,
-    );
-    let comparison = Comparison::new(label, timings, baseline);
-    eprintln!("{:#?}", comparison);
-    comparison
+    Comparison::new(label, timings, timings_baseline)
 }
 
 #[test]
 #[ignore]
-fn perf_tests() {
-    // cargo test -r perf_tests -- --nocapture --ignored
+fn quickselect_perf() {
+    // cargo test -r quickselect_perf -- --nocapture --ignored
 
     let mut runs = Vec::new();
-    const DURATION: f32 = 5.0;
-    eprintln!("Running each test for at least {DURATION:.2} seconds. The tests and the baseline runs are randomly interleaved.");
-    eprintln!("Data preparation is ignored in the timing.");
 
-    fn run<P>(label: &str, prep: P, runs: &mut Vec<Comparison>)
+    eprintln!(
+        "Comparing quickselect with custom pivot selection to core::slice::select_nth_unstable."
+    );
+    eprintln!("Running each benchmark for at least {MIN_DURATION:.2} seconds and at least {MIN_RUNS} times. The tests and the baseline runs are randomly interleaved.");
+    eprintln!("Data preparation is ignored in the timing.\n");
+
+    eprintln!("| data type          | slice length | index       | throughput, runs/sec | baseline, runs/sec | ratio |");
+    eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
+
+    fn run<P, T>(label: &str, mut prep: P, runs: &mut Vec<Comparison>)
     where
-        P: FnMut(usize, &mut WyRng) -> Vec<u32> + Copy,
+        P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
+        T: Ord
     {
-        let counts = [10_000, 1_000_000, 100_000_000];
-        let p50 = |count: usize| count / 2;
-        let p25 = |count: usize| count / 4;
+        let counts = [1_000, 10_000, 1_000_000, 100_000_000];
+        let p001 = |count: usize| count / 1000;
         let p01 = |count: usize| count / 100;
+        let p05 = |count: usize| count / 20;
+        let p25 = |count: usize| count / 4;
+        let p50 = |count: usize| count / 2;
+        let percentiles = [p001, p01, p05, p25, p50];
+
+        let mut rng_a = WyRng::new(0);
+        let mut rng_b = WyRng::new(0);
+
+        let mut compare = |count, index, label| {
+            bench(
+                label,
+                || prep(count, rng_a.as_mut()),
+                |data| {
+                    quickselect(data.as_mut_slice(), index, &mut T::lt, rng_b.as_mut());
+                },
+                |data| {
+                    data.select_nth_unstable(index);
+                },
+                |data| {
+                    let nth = &data[index];
+                    data[..index].iter().all(|x| x <= nth) && data[index..].iter().all(|x| x >= nth)
+                },
+            )
+        };
 
         for count in counts {
-            let index = p01(count);
-            let run_label = format!("{label} (count = {count}, index = {index})",);
-            let run = compare(&run_label, prep, count, index, DURATION);
-            runs.push(run);
-
-            let index = p25(count);
-            let run_label = format!("{label} (count = {count}, index = {index})",);
-            let run = compare(&run_label, prep, count, index, DURATION);
-            runs.push(run);
-
-            let index = p50(count);
-            let run_label = format!("{label} (count = {count}, index = {index})",);
-            let run = compare(&run_label, prep, count, index, DURATION);
-            runs.push(run);
+            for p in percentiles {
+                let index = p(count);
+                let comparison = compare(
+                    count,
+                    index,
+                    format!("{label} (count = {count}, index = {index})",),
+                );
+                eprintln!(
+                    "| {label:<18} | {count:<12} | {index:<11} | {tput:<20.02} | {baseline:<18.02} | {ratio:<5.03} |",
+                    tput = comparison.timings.throughput,
+                    baseline = comparison.baseline.throughput,
+                    ratio = comparison.throughput_ratio
+                );
+                runs.push(comparison);
+            }
         }
     }
 
-    run("random_u32s", random_u32s, &mut runs);
-    // run("random_u32s_dups", random_u32s_dups, &mut runs);
-    // run("sawtooth_u32s", sawtooth_u32s, &mut runs);
-    // run("reversed_u32s", reversed_u32s, &mut runs);
-    // run("shuffled_u32s", shuffled_u32s, &mut runs);
+    run("random (u32)", random_u32s, &mut runs);
+    run("sawtooth (u32)", sawtooth_u32s, &mut runs);
+    run("reversed (u32)", reversed_u32s, &mut runs);
+    run("random dups (u32s)", random_u32s_dups, &mut runs);
+    run("random (bool)", random_bools, &mut runs);
+    // run("shuffled (u32)", shuffled_u32s, &mut runs);
 }
