@@ -168,9 +168,9 @@ fn quickselect_perf() {
     fn run<P, T>(label: &str, mut prep: P, runs: &mut Vec<Comparison>)
     where
         P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
-        T: Ord
+        T: Ord,
     {
-        let counts = [1_000, 10_000, 1_000_000, 100_000_000];
+        let counts = [1_000, 10_000, /*1_000_000, 100_000_000*/];
         let p001 = |count: usize| count / 1000;
         let p01 = |count: usize| count / 100;
         let p05 = |count: usize| count / 20;
@@ -217,10 +217,9 @@ fn quickselect_perf() {
         }
     }
 
+    run("random (bool)", random_bools, &mut runs);
     run("random (u32)", random_u32s, &mut runs);
     run("sawtooth (u32)", sawtooth_u32s, &mut runs);
     run("reversed (u32)", reversed_u32s, &mut runs);
     run("random dups (u32s)", random_u32s_dups, &mut runs);
-    run("random (bool)", random_bools, &mut runs);
-    // run("shuffled (u32)", shuffled_u32s, &mut runs);
 }
