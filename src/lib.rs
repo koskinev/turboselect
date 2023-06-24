@@ -12,6 +12,23 @@ use core::{
 use sort::{median, sort};
 use wyrand::WyRng;
 
+// When dropped, copies from `src` into `dest`.
+struct InsertionHole<T> {
+    src: *const T,
+    dest: *mut T,
+}
+
+impl<T> Drop for InsertionHole<T> {
+    fn drop(&mut self) {
+        // SAFETY: This is a helper class. Please refer to its usage for correctness. Namely, one
+        // must be sure that `src` and `dst` does not overlap as required by
+        // `ptr::copy_nonoverlapping` and are both valid for writes.
+        unsafe {
+            ptr::copy_nonoverlapping(self.src, self.dest, 1);
+        }
+    }
+}
+
 /// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
 /// where `u` is the number of elements less than the pivot, and the index of the pivot after
 /// partitioning.
@@ -34,15 +51,21 @@ where
     data.swap(0, index);
 
     let (head, tail) = data.split_first_mut().unwrap();
+    let u = {
     // Read the pivot into the stack. The read below is safe, because the pivot is the first
     // element in the slice.
     let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
+        let _pivot_guard = InsertionHole {
+            src: &*tmp,
+            dest: head,
+        };
     let pivot = &*tmp;
 
     // Find the positions of the first pair of out-of-order elements.
     let (mut l, mut r) = (0, tail.len());
     unsafe {
-        // The calls to get_unchecked are safe, because the slice is non-empty and we ensure l <= r.
+            // The calls to get_unchecked are safe, because the slice is non-empty and we ensure l
+            // <= r.
         while l < r && is_less(tail.get_unchecked(l), pivot) {
             l += 1;
         }
@@ -50,7 +73,8 @@ where
             r -= 1;
         }
     }
-    let u = l + partition_in_blocks(&mut tail[l..r], pivot, is_less);
+        l + partition_in_blocks(&mut tail[l..r], pivot, is_less)
+    };
     data.swap(0, u);
     (u, u)
 }
@@ -76,11 +100,18 @@ where
     data.swap(0, index);
     let (head, tail) = data.split_first_mut().unwrap();
 
+    let (u, v) = {
     // Read the pivot into the stack. The read below is safe, because the pivot is the first
     // element in the slice.
     let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
+        let _pivot_guard = InsertionHole {
+            src: &*tmp,
+            dest: head,
+        };
     let pivot = &*tmp;
-    let (u, v) = partition_in_blocks_dual(tail, pivot, pivot, is_less);
+
+        partition_in_blocks_dual(tail, pivot, pivot, is_less)
+    };
     data.swap(0, u);
     (u, v)
 }
