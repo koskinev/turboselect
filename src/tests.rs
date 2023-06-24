@@ -1,5 +1,6 @@
 use crate::{
-    partition_in_blocks_dual, quickselect, sample, select_min, select_nth_unstable,
+    partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
+    select_nth_unstable,
     sort::{median, sort},
     wyrand::WyRng,
 };
@@ -21,7 +22,7 @@ fn block_dual() {
     let repeat = 1000;
 
     #[cfg(miri)]
-    let repeat = 100;
+    let repeat = 10;
 
     let max_count = 30;
     let mut rng = WyRng::new(123);
@@ -92,8 +93,34 @@ fn sawtooth_median() {
 }
 
 #[test]
+fn bool_median() {
+    #[cfg(not(miri))]
+    let repeat = 1000;
+
+    #[cfg(miri)]
+    let repeat = 10;
+
+    #[cfg(not(miri))]
+    let count = 1000;
+    #[cfg(miri)]
+    let count = 100;
+
+    let index = count / 2;
+    let mut rng = WyRng::new(123);
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = (0..count).map(|_| rng.bool()).collect();
+        // let mut cloned = data.clone();
+        // let (left, nth, right) = cloned.select_nth_unstable(index);
+        let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
+        assert!(left.iter().all(|elem| elem <= nth));
+        assert!(right.iter().all(|elem| elem >= nth));
+    }
+}
+
+#[test]
 fn extreme_index() {
-    let mut pcg = WyRng::new(123);
+    let mut rng = WyRng::new(123);
 
     #[cfg(not(miri))]
     let count = 10_000_000;
@@ -103,7 +130,7 @@ fn extreme_index() {
     let index = 42;
 
     let mut data: Vec<usize> = (0..count).collect();
-    shuffle(data.as_mut_slice(), &mut pcg);
+    shuffle(data.as_mut_slice(), &mut rng);
     let (left, &mut nth, right) = select_nth_unstable(data.as_mut_slice(), index);
 
     assert!(left.iter().all(|elem| elem < &nth));
@@ -203,11 +230,47 @@ fn min_10() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
-        shuffle(data.as_mut_slice(), rng.as_mut());
-
-        let (_u, v) = select_min(data.as_mut_slice(), &mut usize::lt);
+        let mut cloned = data.clone();
+        let (_u, v) = partition_min(data.as_mut_slice(), &mut usize::lt);
         let min = &data[0];
-        assert!(data[..=v].iter().all(|elem| elem == min));
+        for (i, elem) in data.iter().enumerate() {
+            if i <= v {
+                assert!(elem == min);
+            } else {
+                assert!(elem > min);
+            }
+        }
+        data.sort();
+        cloned.sort();
+        assert_eq!(data, cloned);
+    }
+}
+
+#[test]
+fn max_10() {
+    let len = 10;
+    let mut rng = WyRng::new(0);
+
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 10;
+
+    for _iter in 0..repeat {
+        let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
+        let mut cloned = data.clone();
+        let (u, _v) = partition_max(data.as_mut_slice(), &mut usize::lt);
+        let max = &data[u];
+        for (i, elem) in data.iter().enumerate() {
+            if i >= u {
+                assert!(elem == max);
+            } else {
+                assert!(elem < max);
+            }
+        }
+        data.sort();
+        cloned.sort();
+        assert_eq!(data, cloned);
     }
 }
 
