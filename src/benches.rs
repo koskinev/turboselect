@@ -153,6 +153,7 @@ fn bench<D, P: FnMut() -> D, T: FnMut(&mut D), B: FnMut(&mut D), C: FnMut(D) -> 
 #[ignore]
 fn quickselect_perf() {
     // cargo test -r quickselect_perf -- --nocapture --ignored
+    // cargo flamegraph --unit-test -- quickselect_perf --ignored
 
     let mut runs = Vec::new();
 
