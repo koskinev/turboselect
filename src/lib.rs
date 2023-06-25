@@ -36,10 +36,10 @@ impl<T> Drop for InsertionHole<T> {
 /// The resulting partitioning is as follows:
 ///
 /// ```text
-/// ┌───────────┬────────────┐
-/// │ < data[u] │ >= data[u] │
-/// └───────────┴────────────┘
-///              u        
+/// ┌─────────────────────────────┬──────────────────────────────┐
+/// │ is_less(&data[x], &data[u]) │ !is_less(&data[x], &data[u]) │
+/// └─────────────────────────────┴──────────────────────────────┘
+///                                u        
 /// ```
 ///
 /// Panics if `index` is out of bounds.
@@ -52,27 +52,27 @@ where
 
     let (head, tail) = data.split_first_mut().unwrap();
     let u = {
-    // Read the pivot into the stack. The read below is safe, because the pivot is the first
-    // element in the slice.
-    let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
+        // Read the pivot into the stack. The read below is safe, because the pivot is the first
+        // element in the slice.
+        let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
         let _pivot_guard = InsertionHole {
             src: &*tmp,
             dest: head,
         };
-    let pivot = &*tmp;
+        let pivot = &*tmp;
 
-    // Find the positions of the first pair of out-of-order elements.
-    let (mut l, mut r) = (0, tail.len());
-    unsafe {
+        // Find the positions of the first pair of out-of-order elements.
+        let (mut l, mut r) = (0, tail.len());
+        unsafe {
             // The calls to get_unchecked are safe, because the slice is non-empty and we ensure l
             // <= r.
-        while l < r && is_less(tail.get_unchecked(l), pivot) {
-            l += 1;
+            while l < r && is_less(tail.get_unchecked(l), pivot) {
+                l += 1;
+            }
+            while l < r && !is_less(tail.get_unchecked(r - 1), pivot) {
+                r -= 1;
+            }
         }
-        while l < r && !is_less(tail.get_unchecked(r - 1), pivot) {
-            r -= 1;
-        }
-    }
         l + partition_in_blocks(&mut tail[l..r], pivot, is_less)
     };
     data.swap(0, u);
@@ -83,13 +83,14 @@ where
 /// where `u` is the number of elements less than the pivot, and `v` is the number of elements less
 /// than or equal to the pivot.
 ///
-/// The resulting partitioning is as follows:
+/// The resulting partitioning is:
 ///
 /// ```text
-/// ┌───────────┬───────────────────────────┬────────────┐
-/// │ < data[u] │ data[u] == ... == data[v] │ > data[v]  │
-/// └───────────┴───────────────────────────┴────────────┘
-///              u                         v
+/// ┌─────────────────────────────┬─────────────────────────────────┬─────────────────────────────┐
+/// │ is_less(&data[x], &data[u]) │    !is_less(&data[x], &data[u]) │ is_less(&data[v], &data[x]) │
+/// │                             │ && !is_less(&data[v], &data[x]) │                             │
+/// └─────────────────────────────┴─────────────────────────────────┴─────────────────────────────┘
+///                                u                               v
 /// ```
 ///
 /// Panics if `index` is out of bounds.
@@ -101,14 +102,14 @@ where
     let (head, tail) = data.split_first_mut().unwrap();
 
     let (u, v) = {
-    // Read the pivot into the stack. The read below is safe, because the pivot is the first
-    // element in the slice.
-    let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
+        // Read the pivot into the stack. The read below is safe, because the pivot is the first
+        // element in the slice.
+        let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
         let _pivot_guard = InsertionHole {
             src: &*tmp,
             dest: head,
         };
-    let pivot = &*tmp;
+        let pivot = &*tmp;
 
         partition_in_blocks_dual(tail, pivot, pivot, is_less)
     };
@@ -439,12 +440,21 @@ where
     let mut end_r = ptr::null_mut();
     let mut offsets_r = [MaybeUninit::<u8>::uninit(); BLOCK];
 
-    // `p` points to the first element that belongs to the left. If `l > p`, the elements in the
-    // range `p..l` belong to the left.
+    // `p` tracks the first element smaller than the lower pivot
     let mut p = l;
-    // `q` points past the last element that belongs to the right. If `r < e`, the elements in the
-    // range `r..e` belong to the middle.
+    // `q` tracks the element after the last element greater than the higher pivot
     let mut q = r;
+
+    // unsafe {
+    //     while p < e && !is_less(&*p, low) && !is_less(low, &*p) {
+    //         p = p.add(1);
+    //     }
+    //     while q.sub(1) > p && !is_less(high, &*(q.sub(1))) && !is_less(&*(q.sub(1)), high) {
+    //         q = q.sub(1);
+    //     }
+    // }
+    // l = p;
+    // r = q;
 
     // FIXME: When we get VLAs, try creating one array of length `min(v.len(), 2 * BLOCK)` rather
     // than two fixed-size arrays of length `BLOCK`. VLAs might be more cache-efficient.
@@ -720,7 +730,7 @@ where
     for offset in 0..core::cmp::min(a, b) {
         unsafe {
             l = l.sub(1);
-            ptr::swap(s.add(offset), l);
+            ptr::swap_nonoverlapping(s.add(offset), l, 1);
         }
     }
 
@@ -728,7 +738,7 @@ where
     let (c, d) = (saturating_width(r, q), width(q, e));
     for offset in 0..core::cmp::min(c, d) {
         unsafe {
-            ptr::swap(r, e.sub(offset + 1));
+            ptr::swap_nonoverlapping(r, e.sub(offset + 1), 1);
             r = r.add(1);
         }
     }
@@ -742,22 +752,52 @@ fn partition_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
+    // Number of elements in a typical block.
+    const BLOCK: usize = 64;
+
+    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
+    fn width<T>(l: *mut T, r: *mut T) -> usize {
+        assert!(core::mem::size_of::<T>() > 0);
+        // FIXME: this should *likely* use `offset_from`, but more
+        // investigation is needed (including running tests in miri).
+        unsafe { r.offset_from(l) as usize }
+    }
+
     // The index of the last element that is equal to the minimum element.
+    let min = data.as_mut_ptr();
+    let mut elem = unsafe { min.add(1) };
+    let stop = unsafe { min.add(data.len()) };
+    let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
+    let mut start = offsets.as_mut_ptr().cast();
+    let mut end: *mut u8 = start;
     let mut v = 0;
-    for i in 1..data.len() {
-        // If the element is less than the first element of the array, swap the elements
-        // and set v = 0.
-        if is_less(&data[i], &data[0]) {
-            v = 0;
-            data.swap(0, i);
-        }
-        // Otherwise, if the first element is not less than the element, it must be equal to
-        // the element. Increment v and swap the element with the element at v.
-        else if !is_less(&data[0], &data[i]) {
-            v += 1;
-            if v < i {
-                data.swap(i, v);
+
+    while elem < stop {
+        // Scan the next block.
+        let block = core::cmp::min(BLOCK, width(elem, stop));
+        unsafe {
+            for offset in 0..block {
+                end.write(offset as u8);
+                let is_le =
+                    is_less(&*elem.add(offset), &*min) || !is_less(&*min, &*elem.add(offset));
+                end = end.add(is_le as usize);
             }
+            for _ in 0..width(start, end) {
+                let offset = start.read() as usize;
+                if is_less(&*elem.add(offset), &*min) {
+                    v = 0;
+                    ptr::swap_nonoverlapping(elem.add(offset), min, 1);
+                } else if !is_less(&*min, &*elem.add(offset)) {
+                    v += 1;
+                    if v < elem.add(offset).offset_from(min) as usize {
+                        ptr::swap_nonoverlapping(elem.add(offset), min.add(v), 1);
+                    }
+                }
+                start = start.add(1);
+            }
+            elem = elem.add(block);
+            start = offsets.as_mut_ptr().cast();
+            end = start;
         }
     }
     (0, v)
@@ -799,7 +839,7 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     assert!(index < data.len());
-    let mut was = None;
+    let mut was: Option<&T> = None;
     loop {
         let len = data.len();
         let (u, v) = match (index, len) {
@@ -812,7 +852,7 @@ where
             // Unless the slice is very small, select a pivot and partition the slice.
             (_, 6..) => {
                 let p = select_pivot(data, index, is_less, rng);
-                if was.take().map(|w| !is_less(w, &data[p])).unwrap_or(false) {
+                if was.take().filter(|w| !is_less(w, &data[p])).is_some() {
                     data.swap(p, 0);
                     partition_min(data, is_less)
                 } else if is_less(&data[p - 1], &data[p + 1]) {
