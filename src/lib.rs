@@ -776,12 +776,10 @@ where
         // Scan the next block.
         let block = core::cmp::min(BLOCK, width(elem, stop));
         unsafe {
-            // Scan the block and store offsets to the elements less than or equal to the current
-            // minimum.
+            // Scan the block and store offsets to the elements less than or equal <= minimum.
             for offset in 0..block {
                 end.write(offset as u8);
-                let is_le =
-                    is_less(&*elem.add(offset), &*min) || !is_less(&*min, &*elem.add(offset));
+                let is_le = !is_less(&*min, &*elem.add(offset));
                 end = end.add(is_le as usize);
             }
             // Scan the found elements
@@ -840,8 +838,7 @@ where
             // maximum.
             for offset in 0..block {
                 end.write(offset as u8);
-                let is_ge =
-                    is_less(&*max, &*elem.add(offset)) || !is_less(&*elem.add(offset), &*max);
+                let is_ge = !is_less(&*elem.add(offset), &*max);
                 end = end.add(is_ge as usize);
             }
             // Scan the found elements
