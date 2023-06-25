@@ -770,27 +770,32 @@ where
     let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
     let mut start = offsets.as_mut_ptr().cast();
     let mut end: *mut u8 = start;
-    let mut v = 0;
+    let mut dups = 0;
 
     while elem < stop {
         // Scan the next block.
         let block = core::cmp::min(BLOCK, width(elem, stop));
         unsafe {
+            // Scan the block and store offsets to the elements less than or equal to the current
+            // minimum.
             for offset in 0..block {
                 end.write(offset as u8);
                 let is_le =
                     is_less(&*elem.add(offset), &*min) || !is_less(&*min, &*elem.add(offset));
                 end = end.add(is_le as usize);
             }
+            // Scan the found elements
             for _ in 0..width(start, end) {
                 let offset = start.read() as usize;
                 if is_less(&*elem.add(offset), &*min) {
-                    v = 0;
+                    // We found a new minimum.
+                    dups = 0;
                     ptr::swap_nonoverlapping(elem.add(offset), min, 1);
                 } else if !is_less(&*min, &*elem.add(offset)) {
-                    v += 1;
-                    if v < elem.add(offset).offset_from(min) as usize {
-                        ptr::swap_nonoverlapping(elem.add(offset), min.add(v), 1);
+                    // We found an element equal to the minimum.
+                    dups += 1;
+                    if dups < elem.add(offset).offset_from(min) as usize {
+                        ptr::swap_nonoverlapping(elem.add(offset), min.add(dups), 1);
                     }
                 }
                 start = start.add(1);
@@ -800,7 +805,7 @@ where
             end = start;
         }
     }
-    (0, v)
+    (0, dups)
 }
 
 /// Puts the maximum elements at the end of the slice and returns the indices of the first and
@@ -809,25 +814,58 @@ fn partition_max<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let v = data.len() - 1;
-    let mut u = v;
-    for i in (0..v).rev() {
-        // If the element is greater than the last element of the array, swap the elements
-        // and set u = v.
-        if is_less(&data[v], &data[i]) {
-            u = v;
-            data.swap(i, v);
-        }
-        // Otherwise, if the last element is not greater than the element, it must be equal to
-        // the element. Decrement u and swap the element with the element at u.
-        else if !is_less(&data[i], &data[v]) {
-            u -= 1;
-            if u > i {
-                data.swap(i, u);
-            }
-        }
+    // Number of elements in a typical block.
+    const BLOCK: usize = 64;
+
+    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
+    fn width<T>(l: *mut T, r: *mut T) -> usize {
+        assert!(core::mem::size_of::<T>() > 0);
+        unsafe { r.offset_from(l) as usize }
     }
-    (u, v)
+
+    let max = data.as_mut_ptr();
+    let mut elem = unsafe { max.add(1) };
+    let stop = unsafe { max.add(data.len()) };
+    let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
+    let start = offsets.as_mut_ptr().cast();
+    let mut end: *mut u8 = start;
+    let last = data.len() - 1;
+    let mut dups = 0;
+
+    unsafe {
+        while elem < stop.sub(dups) {
+            // Scan the next block.
+            let block = core::cmp::min(BLOCK, width(elem, stop.sub(dups)));
+            // Scan the block and store offsets to the elements greater than or equal to the current
+            // maximum.
+            for offset in 0..block {
+                end.write(offset as u8);
+                let is_ge =
+                    is_less(&*max, &*elem.add(offset)) || !is_less(&*elem.add(offset), &*max);
+                end = end.add(is_ge as usize);
+            }
+            // Scan the found elements
+            for _ in 0..width(start, end) {
+                end = end.sub(1);
+                let offset = end.read() as usize;
+                if is_less(&*max, &*elem.add(offset)) {
+                    // We found a new maximum.
+                    dups = 0;
+                    ptr::swap_nonoverlapping(elem.add(offset), max, 1);
+                } else if !is_less(&*elem.add(offset), &*max) {
+                    // We found an element equal to the maximum
+                    dups += 1;
+                    if dups < max.offset_from(elem.add(offset)) as usize {
+                        ptr::swap_nonoverlapping(elem.add(offset), stop.sub(dups), 1);
+                    }
+                }
+            }
+            elem = elem.add(block);
+        }
+        // Place the maximum elements at the end of the slice.
+        ptr::swap_nonoverlapping(max, stop.sub(dups + 1), 1);
+    }
+    (last - dups, last)
 }
 
 /// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
