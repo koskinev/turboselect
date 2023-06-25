@@ -157,7 +157,7 @@ fn nth() {
     #[cfg(miri)]
     let max = 1000;
 
-    let mut pcg = WyRng::new(0);
+    let mut pcg = WyRng::new(123);
 
     for _iter in 0..repeat {
         let count = pcg.bounded_usize(1, max);
@@ -221,7 +221,7 @@ fn sample_n() {
 #[test]
 fn min_10() {
     let len = 10;
-    let mut rng = WyRng::new(0);
+    let mut rng = WyRng::new(123);
 
     #[cfg(not(miri))]
     let repeat = 1000;
@@ -244,15 +244,20 @@ fn min_10() {
         cloned.sort();
         assert_eq!(data, cloned);
     }
+
+    let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
+    let (u, v) = partition_min(data.as_mut_slice(), &mut usize::lt);
+    assert_eq!(u, 0);
+    assert_eq!(v, 9);
 }
 
 #[test]
 fn max_10() {
     let len = 10;
-    let mut rng = WyRng::new(0);
+    let mut rng = WyRng::new(123);
 
     #[cfg(not(miri))]
-    let repeat = 1000;
+    let repeat = 10000;
     #[cfg(miri)]
     let repeat = 10;
 
@@ -272,6 +277,11 @@ fn max_10() {
         cloned.sort();
         assert_eq!(data, cloned);
     }
+
+    let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
+    let (u, v) = partition_max(data.as_mut_slice(), &mut usize::lt);
+    assert_eq!(u, 0);
+    assert_eq!(v, 9);
 }
 
 #[test]
