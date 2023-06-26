@@ -16,6 +16,7 @@ fn shuffle<T>(data: &mut [T], rng: &mut WyRng) {
         data.swap(i, j);
     }
 }
+
 #[test]
 fn block_dual() {
     #[cfg(not(miri))]
@@ -46,7 +47,7 @@ fn block_dual() {
 
 #[test]
 fn large_median() {
-    let mut pcg = WyRng::new(123);
+    let mut rng = WyRng::new(123);
 
     #[cfg(not(miri))]
     let count = 10_000_000;
@@ -56,7 +57,7 @@ fn large_median() {
     let mid = count / 2;
 
     let mut data: Vec<usize> = (0..count).collect();
-    shuffle(data.as_mut_slice(), &mut pcg);
+    shuffle(data.as_mut_slice(), &mut rng);
     let (left, median, right) = select_nth_unstable(data.as_mut_slice(), mid);
     assert_eq!(median, &mid);
     assert!(left.iter().all(|elem| elem < &mid));
@@ -64,7 +65,7 @@ fn large_median() {
 }
 
 #[test]
-fn sawtooth_median() {
+fn sawtooth() {
     let mut rng = WyRng::new(123);
 
     #[cfg(not(miri))]
@@ -72,10 +73,14 @@ fn sawtooth_median() {
     #[cfg(miri)]
     let count = 1000;
 
-    let index = count / 1000;
+    #[cfg(not(miri))]
+    let repeat = 1000;
+
+    #[cfg(miri)]
+    let repeat = 10;
 
     /// Returns a vector of `u32`s with a sawtooth pattern.
-    fn sawtooth(count: usize, _rng: &mut WyRng) -> Vec<usize> {
+    fn sawtooth_u32s(count: usize, _rng: &mut WyRng) -> Vec<usize> {
         let mut data = Vec::with_capacity(count);
         let count = count;
         let sqrt_count = (count as f64).sqrt() as usize;
@@ -86,12 +91,50 @@ fn sawtooth_median() {
         data
     }
 
-    let mut data = sawtooth(count, rng.as_mut());
-    let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
-    assert!(left.iter().all(|elem| elem <= nth));
-    assert!(right.iter().all(|elem| elem >= nth));
+    for iter in 0..repeat {
+        let index = (iter * count) / repeat; 
+        let mut data = sawtooth_u32s(count, rng.as_mut());
+        let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
+        assert!(left.iter().all(|elem| elem <= nth));
+        assert!(right.iter().all(|elem| elem >= nth));
+    }
 }
 
+#[test]
+fn reversed() {
+
+    let mut rng = WyRng::new(123);
+
+    #[cfg(not(miri))]
+    let count = 10_000;
+    #[cfg(miri)]
+    let count = 1000;
+
+    
+    #[cfg(not(miri))]
+    let repeat = 1000;
+
+    #[cfg(miri)]
+    let repeat = 10;
+
+    /// Returns a vector of integers in the range `0..count`, in reversed order.
+    fn reversed_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
+        let mut data = Vec::with_capacity(count);
+        let max = rng.bounded_u32(0, count as u32);
+        for index in 0..count {
+            data.push((max * (count - index + 1) as u32) / (count as u32));
+        }
+        data
+    }
+    
+    for iter in 0..repeat {
+        let index = (iter * count) / repeat; 
+        let mut data = reversed_u32s(count, rng.as_mut());
+        let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
+        assert!(left.iter().all(|elem| elem <= nth));
+        assert!(right.iter().all(|elem| elem >= nth));
+    }
+}
 #[test]
 fn bool_median() {
     #[cfg(not(miri))]
@@ -157,14 +200,14 @@ fn nth() {
     #[cfg(miri)]
     let max = 1000;
 
-    let mut pcg = WyRng::new(123);
+    let mut rng = WyRng::new(123);
 
     for _iter in 0..repeat {
-        let count = pcg.bounded_usize(1, max);
-        let high = pcg.bounded_usize(0, count);
+        let count = rng.bounded_usize(1, max);
+        let high = rng.bounded_usize(0, count);
 
-        let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
-        let index = pcg.bounded_usize(0, count);
+        let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
+        let index = rng.bounded_usize(0, count);
         select_nth_unstable(&mut data, index);
         let nth = data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
@@ -183,15 +226,15 @@ fn nth_small() {
     let repeat = 1;
 
     let max = 1000;
-    let mut pcg = WyRng::new(123);
+    let mut rng = WyRng::new(123);
 
     for _iter in 0..repeat {
-        let count = pcg.bounded_usize(1, max);
-        let high = pcg.bounded_usize(0, count);
+        let count = rng.bounded_usize(1, max);
+        let high = rng.bounded_usize(0, count);
 
-        let mut data: Vec<_> = (0..count).map(|_| pcg.bounded_usize(0, high)).collect();
-        let index = pcg.bounded_usize(0, count);
-        quickselect(&mut data, index, &mut usize::lt, &mut pcg);
+        let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
+        let index = rng.bounded_usize(0, count);
+        quickselect(&mut data, index, &mut usize::lt, &mut rng);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
