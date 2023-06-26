@@ -563,17 +563,17 @@ where
         }
 
         // Number of out-of-order elements to swap between the left and right side.
-        let count = core::cmp::min(width(start_l, end_l), width(start_r, end_r)) as isize;
+        let count = core::cmp::min(width(start_l, end_l), width(start_r, end_r));
 
         if count > 0 {
             macro_rules! left {
                 () => {
-                    l.offset(*start_l as isize)
+                    l.add(*start_l as usize)
                 };
             }
             macro_rules! right {
                 () => {
-                    r.offset(-(*start_r as isize) - 1)
+                    r.sub(*start_r as usize + 1)
                 };
             }
 
@@ -598,32 +598,46 @@ where
             // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
             // guaranteed not to overlap, and are valid because of the reasoning above.
             unsafe {
+                let mut mid_l = start_l;
+                let mut mid_r = start_r;
                 let tmp = ptr::read(left!());
+
+                *mid_l = *start_l;
+                mid_l = mid_l.add(!is_less(&*right!(), low) as usize);
                 ptr::copy_nonoverlapping(right!(), left!(), 1);
                 for _ in 1..count {
                     start_l = start_l.offset(1);
+                    *mid_r = *start_r;
+                    mid_r = mid_r.add(!is_less(high, &*left!()) as usize);
                     ptr::copy_nonoverlapping(left!(), right!(), 1);
+
                     start_r = start_r.offset(1);
+                    *mid_l = *start_l;
+                    mid_l = mid_l.add(!is_less(&*right!(), low) as usize);
                     ptr::copy_nonoverlapping(right!(), left!(), 1);
                 }
+                *mid_r = *start_r;
+                mid_r = mid_r.add(!is_less(high, &tmp) as usize);
                 ptr::copy_nonoverlapping(&tmp, right!(), 1);
                 core::mem::forget(tmp);
 
-                start_l = start_l.offset(1 - count);
-                start_r = start_r.offset(1 - count);
+                start_l = start_l.add(1);
+                start_r = start_r.add(1);
 
-                // Test if the moved elements should go to the middle.
-                for _ in 0..count {
-                    if !is_less(&*left!(), low) {
-                        ptr::swap(left!(), p);
-                        p = p.offset(1);
-                    }
-                    if !is_less(high, &*right!()) {
-                        ptr::swap(right!(), q.offset(-1));
-                        q = q.offset(-1);
-                    }
-                    start_l = start_l.offset(1);
-                    start_r = start_r.offset(1);
+                let count_l = width(start_l.sub(count), mid_l);
+                mid_l = start_l.sub(count);
+                for _ in 0..count_l {
+                    ptr::swap(l.add(*mid_l as usize), p);
+                    mid_l = mid_l.add(1);
+                    p = p.add(1);
+                }
+
+                let count_r = width(start_r.sub(count), mid_r);
+                mid_r = start_r.sub(count);
+                for _ in 0..count_r {
+                    ptr::swap(r.sub(*mid_r as usize + 1), q.sub(1));
+                    mid_r = mid_r.add(1);
+                    q = q.sub(1);
                 }
             }
         }
