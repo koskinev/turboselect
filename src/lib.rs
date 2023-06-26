@@ -464,43 +464,13 @@ where
         unsafe { r.offset_from(l) as usize }
     }
 
-    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive), or
-    // 0 if ´r < l`.
     fn saturating_width<T>(l: *mut T, r: *mut T) -> usize {
-        unsafe { r.offset_from(l).max(0) as usize }
+        if l <= r {
+            width(l, r)
+        } else {
+            0
+        }
     }
-
-    // Left shifts the value by one bit and sets the least significant bit to 1 if `cond` is true.
-    fn tag(val: u8, cond: bool) -> u8 {
-        (val << 1) | cond as u8
-    }
-
-    // Returns the tag of the value.
-    fn tag_of(val: u8) -> bool {
-        (val & 1) != 0
-    }
-
-    // Removes the tag and returns the value.
-    fn untag(val: u8) -> u8 {
-        val >> 1
-    }
-
-    // fn debug_offsets(start: *mut u8, end: *mut u8) {
-    //     eprint!("Offsets [");
-    //     let mut ptr = start;
-    //     while ptr < end {
-    //         let elem = unsafe { *ptr };
-    //         let offset = untag(elem);
-    //         let tagged = tag_of(elem);
-    //         if tagged {
-    //             eprint!("{}x, ", offset);
-    //         } else {
-    //             eprint!("{}, ", offset);
-    //         }
-    //         ptr = unsafe { ptr.add(1) };
-    //     }
-    //     eprintln!("]");
-    // }
 
     loop {
         // We are done with partitioning block-by-block when `l` and `r` get very close. Then we do
@@ -553,22 +523,10 @@ where
                 unsafe {
                     // Branchless comparison.
                     *end_l = i as u8;
-                    end_l = end_l.add(!is_less(&*elem, low) as usize);
-                    elem = elem.add(1);
+                    end_l = end_l.offset(!is_less(&*elem, low) as isize);
+                    elem = elem.offset(1);
                 }
             }
-
-            // Tag the found elements.
-            let mut offset_l = start_l;
-            let count_l = width(start_l, end_l);
-            for _ in 0..count_l {
-                unsafe {
-                    let not_gt = !is_less(high, &*l.add(*offset_l as usize));
-                    *offset_l = tag(*offset_l, not_gt);
-                    offset_l = offset_l.add(1);
-                }
-            }
-            // debug_offsets(start_l, end_l);
         }
 
         if start_r == end_r {
@@ -596,37 +554,26 @@ where
                 // at most be pointing to the beginning of the slice.
                 unsafe {
                     // Branchless comparison.
-                    elem = elem.sub(1);
+                    elem = elem.offset(-1);
                     *end_r = i as u8;
-                    end_r = end_r.add(!is_less(high, &*elem) as usize);
+                    // end_r = end_r.offset(is_less(&*elem, high) as isize);
+                    end_r = end_r.offset(!is_less(high, &*elem) as isize);
                 }
             }
-
-            // Tag the found elements.
-            let mut offset_r = start_r;
-            let count_r = width(start_r, end_r);
-            for _ in 0..count_r {
-                unsafe {
-                    let not_lt = !is_less(&*r.sub(*offset_r as usize + 1), low);
-                    *offset_r = tag(*offset_r, not_lt);
-                    offset_r = offset_r.add(1);
-                }
-            }
-            // debug_offsets(start_r, end_r);
         }
 
         // Number of out-of-order elements to swap between the left and right side.
-        let count = core::cmp::min(width(start_l, end_l), width(start_r, end_r));
+        let count = core::cmp::min(width(start_l, end_l), width(start_r, end_r)) as isize;
 
         if count > 0 {
             macro_rules! left {
                 () => {
-                    l.add(untag(*start_l) as usize)
+                    l.offset(*start_l as isize)
                 };
             }
             macro_rules! right {
                 () => {
-                    r.sub((untag(*start_r) as usize) + 1)
+                    r.offset(-(*start_r as isize) - 1)
                 };
             }
 
@@ -651,71 +598,32 @@ where
             // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
             // guaranteed not to overlap, and are valid because of the reasoning above.
             unsafe {
-                // let tmp = ptr::read(left!());
-                // ptr::copy_nonoverlapping(right!(), left!(), 1);
-                // for _ in 1..count {
-                //     start_l = start_l.offset(1);
-                //     ptr::copy_nonoverlapping(left!(), right!(), 1);
-                //     start_r = start_r.offset(1);
-                //     ptr::copy_nonoverlapping(right!(), left!(), 1);
-                // }
-                // ptr::copy_nonoverlapping(&tmp, right!(), 1);
-                // core::mem::forget(tmp);
+                let tmp = ptr::read(left!());
+                ptr::copy_nonoverlapping(right!(), left!(), 1);
+                for _ in 1..count {
+                    start_l = start_l.offset(1);
+                    ptr::copy_nonoverlapping(left!(), right!(), 1);
+                    start_r = start_r.offset(1);
+                    ptr::copy_nonoverlapping(right!(), left!(), 1);
+                }
+                ptr::copy_nonoverlapping(&tmp, right!(), 1);
+                core::mem::forget(tmp);
 
-                let mut mid_l = start_l;
-                let mut mid_r = start_r;
+                start_l = start_l.offset(1 - count);
+                start_r = start_r.offset(1 - count);
+
+                // Test if the moved elements should go to the middle.
                 for _ in 0..count {
-                    ptr::swap_nonoverlapping(left!(), right!(), 1);
-                    *mid_l = *start_l;
-                    *mid_r = *start_r;
-                    mid_l = mid_l.add(tag_of(*start_r) as usize);
-                    mid_r = mid_r.add(tag_of(*start_l) as usize);
+                    if !is_less(&*left!(), low) {
+                        ptr::swap(left!(), p);
+                        p = p.offset(1);
+                    }
+                    if !is_less(high, &*right!()) {
+                        ptr::swap(right!(), q.offset(-1));
+                        q = q.offset(-1);
+                    }
                     start_l = start_l.offset(1);
                     start_r = start_r.offset(1);
-                }
-
-                // start_l = start_l.sub(count-1);
-                // start_r = start_r.sub(count-1);
-
-                // let mut mid_l = start_l;
-                // let mut mid_r = start_r;
-                // let tmp_l = *start_l;
-
-                // *mid_l = *start_l;
-                // mid_l = mid_l.add(tag_of(*start_r) as usize);
-                // for _ in 1..count {
-                //     start_l = start_l.offset(1);
-                //     *mid_r = *start_r;
-                //     mid_r = mid_r.add(tag_of(*start_l) as usize);
-
-                //     start_r = start_r.offset(1);
-                //     *mid_l = *start_l;
-                //     mid_l = mid_l.add(tag_of(*start_r) as usize);
-                // }
-                // *mid_r = *start_r;
-                // mid_r = mid_r.add(tag_of(tmp_l) as usize);
-
-                // start_l = start_l.add(1);
-                // start_r = start_r.add(1);
-
-                // Move the tagged elements temporarily to the extreme left
-                let count_l = width(start_l.sub(count), mid_l);
-                mid_l = start_l.sub(count);
-                // debug_offsets(mid_l, mid_l.add(count_l));
-                for _ in 0..count_l {
-                    ptr::swap(l.add(untag(*mid_l) as usize), p);
-                    mid_l = mid_l.add(1);
-                    p = p.add(1);
-                }
-
-                // Move the tagged elements temporarily to the extreme right
-                let count_r = width(start_r.sub(count), mid_r);
-                mid_r = start_r.sub(count);
-                // debug_offsets(mid_r, mid_r.add(count_r));
-                for _ in 0..count_r {
-                    ptr::swap(r.sub(untag(*mid_r) as usize + 1), q.sub(1));
-                    mid_r = mid_r.add(1);
-                    q = q.sub(1);
                 }
             }
         }
@@ -768,14 +676,14 @@ where
             //  - `offsets_l` contains valid offsets into `v` collected during the partitioning of
             //    the last block, so the `l.offset` calls are valid.
             unsafe {
-                end_l = end_l.sub(1);
-                ptr::swap(l.add(untag(*end_l) as usize), r.sub(1));
+                end_l = end_l.offset(-1);
+                ptr::swap(l.offset(*end_l as isize), r.offset(-1));
                 // Move the elements that should go to the middle to the extreme right.
-                if !is_less(high, &*r.sub(1)) {
-                    ptr::swap(r.sub(1), q.sub(1));
-                    q = q.sub(1);
+                if !is_less(high, &*r.offset(-1)) {
+                    ptr::swap(r.offset(-1), q.offset(-1));
+                    q = q.offset(-1);
                 }
-                r = r.sub(1);
+                r = r.offset(-1);
             }
         }
         if r > s {
@@ -785,12 +693,11 @@ where
         // The right block remains.
         // Move its remaining out-of-order elements to the far left.
         debug_assert_eq!(width(l, r), block_r);
-        // debug_offsets(start_r, end_r);
         while start_r < end_r {
             // SAFETY: See the reasoning in [remaining-elements-safety].
             unsafe {
-                end_r = end_r.sub(1);
-                ptr::swap(l, r.sub(untag(*end_r) as usize + 1));
+                end_r = end_r.offset(-1);
+                ptr::swap(l, r.offset(-(*end_r as isize) - 1));
                 // Move the elements that should go to the middle to the extreme left.
                 if !is_less(&*l, low) {
                     ptr::swap(l, p);
