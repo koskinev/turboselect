@@ -459,7 +459,7 @@ where
     // FIXME: When we get VLAs, try creating one array of length `min(v.len(), 2 * BLOCK)` rather
     // than two fixed-size arrays of length `BLOCK`. VLAs might be more cache-efficient.
 
-    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
+    /// Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
     fn width<T>(l: *mut T, r: *mut T) -> usize {
         unsafe { r.offset_from(l) as usize }
     }
@@ -523,8 +523,8 @@ where
                 unsafe {
                     // Branchless comparison.
                     *end_l = i as u8;
-                    end_l = end_l.offset(!is_less(&*elem, low) as isize);
-                    elem = elem.offset(1);
+                    end_l = end_l.add(!is_less(&*elem, low) as usize);
+                    elem = elem.add(1);
                 }
             }
         }
@@ -554,10 +554,9 @@ where
                 // at most be pointing to the beginning of the slice.
                 unsafe {
                     // Branchless comparison.
-                    elem = elem.offset(-1);
+                    elem = elem.sub(1);
                     *end_r = i as u8;
-                    // end_r = end_r.offset(is_less(&*elem, high) as isize);
-                    end_r = end_r.offset(!is_less(high, &*elem) as isize);
+                    end_r = end_r.add(!is_less(high, &*elem) as usize);
                 }
             }
         }
@@ -606,12 +605,12 @@ where
                 mid_l = mid_l.add(!is_less(&*right!(), low) as usize);
                 ptr::copy_nonoverlapping(right!(), left!(), 1);
                 for _ in 1..count {
-                    start_l = start_l.offset(1);
+                    start_l = start_l.add(1);
                     *mid_r = *start_r;
                     mid_r = mid_r.add(!is_less(high, &*left!()) as usize);
                     ptr::copy_nonoverlapping(left!(), right!(), 1);
 
-                    start_r = start_r.offset(1);
+                    start_r = start_r.add(1);
                     *mid_l = *start_l;
                     mid_l = mid_l.add(!is_less(&*right!(), low) as usize);
                     ptr::copy_nonoverlapping(right!(), left!(), 1);
@@ -661,7 +660,7 @@ where
             // SAFETY: Same argument as [block-width-guarantee]. Either this is a full block
             // `2*BLOCK`-wide, or `block_r` has been adjusted for the last handful of
             // elements.
-            r = unsafe { r.offset(-(block_r as isize)) };
+            r = unsafe { r.sub(block_r) };
         }
 
         if is_done {
@@ -690,14 +689,14 @@ where
             //  - `offsets_l` contains valid offsets into `v` collected during the partitioning of
             //    the last block, so the `l.offset` calls are valid.
             unsafe {
-                end_l = end_l.offset(-1);
-                ptr::swap(l.offset(*end_l as isize), r.offset(-1));
+                end_l = end_l.sub(1);
+                ptr::swap(l.add(*end_l as usize), r.sub(1));
                 // Move the elements that should go to the middle to the extreme right.
-                if !is_less(high, &*r.offset(-1)) {
-                    ptr::swap(r.offset(-1), q.offset(-1));
-                    q = q.offset(-1);
+                if !is_less(high, &*r.sub(1)) {
+                    ptr::swap(r.sub(1), q.sub(1));
+                    q = q.sub(1);
                 }
-                r = r.offset(-1);
+                r = r.sub(1);
             }
         }
         if r > s {
@@ -710,14 +709,14 @@ where
         while start_r < end_r {
             // SAFETY: See the reasoning in [remaining-elements-safety].
             unsafe {
-                end_r = end_r.offset(-1);
-                ptr::swap(l, r.offset(-(*end_r as isize) - 1));
+                end_r = end_r.sub(1);
+                ptr::swap(l, r.sub(*end_r as usize + 1));
                 // Move the elements that should go to the middle to the extreme left.
                 if !is_less(&*l, low) {
                     ptr::swap(l, p);
-                    p = p.offset(1);
+                    p = p.add(1);
                 }
-                l = l.offset(1);
+                l = l.add(1);
             }
         }
         if l < e {
@@ -775,6 +774,13 @@ where
         // FIXME: this should *likely* use `offset_from`, but more
         // investigation is needed (including running tests in miri).
         unsafe { r.offset_from(l) as usize }
+    }
+
+    // Initialize the minimum by scanning some elements.
+    let scan = core::cmp::min(BLOCK / 4, data.len() / BLOCK);
+    for k in 1..scan {
+        let index = k * data.len() / scan;
+        sort(data, [0, index], is_less);
     }
 
     // The index of the last element that is equal to the minimum element.
@@ -835,6 +841,13 @@ where
         unsafe { r.offset_from(l) as usize }
     }
 
+    // Initialize the maximum by scanning some elements.
+    let scan = core::cmp::min(BLOCK / 4, data.len() / BLOCK);
+    for k in 1..scan {
+        let index = k * data.len() / scan;
+        sort(data, [index, 0], is_less);
+    }
+
     let max = data.as_mut_ptr();
     let mut elem = unsafe { max.add(1) };
     let stop = unsafe { max.add(data.len()) };
@@ -873,7 +886,7 @@ where
             }
             elem = elem.add(block);
         }
-        // Place the maximum elements at the end of the slice.
+        // Place the maximum at the end of the slice.
         ptr::swap_nonoverlapping(max, stop.sub(dups + 1), 1);
     }
     (last - dups, last)
@@ -891,46 +904,44 @@ where
     let mut was: Option<&T> = None;
     loop {
         let len = data.len();
-        let (u, v) = match (index, len) {
-            // If the first element is needed, select the minimum.
-            (0, _) => partition_min(data, is_less),
-
-            // If the last element is needed, select the maximum.
-            (i, _) if i == len - 1 => partition_max(data, is_less),
-
-            // Unless the slice is very small, select a pivot and partition the slice.
-            (_, 6..) => {
-                let p = select_pivot(data, index, is_less, rng);
-                if was.take().filter(|w| !is_less(w, &data[p])).is_some() {
-                    data.swap(p, 0);
-                    partition_min(data, is_less)
-                } else if is_less(&data[p - 1], &data[p + 1]) {
-                    partition_at_index(data, p, is_less)
-                } else {
-                    // If the element before the pivot is equal to the pivot, use the ternary
-                    // partitioning algorithm, which puts the elements equal to the pivot in the
-                    // middle. This is necessary to ensure that the algorithm terminates.
-                    partition_at_index_eq(data, p, is_less)
+        let (u, v) = match len {
+            6.. => {
+                match index {
+                    0 => partition_min(data, is_less),
+                    i if i == len - 1 => partition_max(data, is_less),
+                    _ => {
+                        let p = select_pivot(data, index, is_less, rng);
+                        if was.take().filter(|w| !is_less(w, &data[p])).is_some() {
+                            data.swap(p, 0);
+                            partition_min(data, is_less)
+                        } else if is_less(&data[p - 1], &data[p + 1]) {
+                            partition_at_index(data, p, is_less)
+                        } else {
+                            // If the element before the pivot is equal to the pivot, use the ternary
+                            // partitioning algorithm, which puts the elements equal to the pivot in the
+                            // middle. This is necessary to ensure that the algorithm terminates.
+                            partition_at_index_eq(data, p, is_less)
+                        }
+                    }
                 }
-            }
-            // For very small slices, use sorting networks.
-            (i, 5) => {
+            },
+            5 => {
                 sort(data, [0, 1, 2, 3, 4], is_less);
-                (i, i)
+                (index, index)
             }
-            (i, 4) => {
+            4 => {
                 sort(data, [0, 1, 2, 3], is_less);
-                (i, i)
+                (index, index)
             }
-            (i, 3) => {
+            3 => {
                 sort(data, [0, 1, 2], is_less);
-                (i, i)
+                (index, index)
             }
-            (i, 2) => {
+            2 => {
                 sort(data, [0, 1], is_less);
-                (i, i)
+                (index, index)
             }
-            (i, _) => (i, i),
+            _ => (index, index),
         };
         // Recurse into the appropriate part of the slice or terminate if the pivot is in the
         // correct position.
