@@ -777,11 +777,8 @@ where
     }
 
     // Initialize the minimum by scanning some elements.
-    let scan = core::cmp::min(BLOCK / 4, data.len() / BLOCK);
-    for k in 1..scan {
-        let index = k * data.len() / scan;
-        sort(data, [0, index], is_less);
-    }
+    sort(data, [0, data.len() - 1], is_less);
+    sort(data, [0, data.len() / 2], is_less);
 
     // The index of the last element that is equal to the minimum element.
     let min = data.as_mut_ptr();
@@ -841,12 +838,9 @@ where
         unsafe { r.offset_from(l) as usize }
     }
 
-    // Initialize the maximum by scanning some elements.
-    let scan = core::cmp::min(BLOCK / 4, data.len() / BLOCK);
-    for k in 1..scan {
-        let index = k * data.len() / scan;
-        sort(data, [index, 0], is_less);
-    }
+    // Initialize the maximum
+    sort(data, [data.len() - 1, 0], is_less);
+    sort(data, [data.len() / 2, 0], is_less);
 
     let max = data.as_mut_ptr();
     let mut elem = unsafe { max.add(1) };
@@ -905,7 +899,7 @@ where
     loop {
         let len = data.len();
         let (u, v) = match len {
-            6.. => {
+            7.. => {
                 match index {
                     0 => partition_min(data, is_less),
                     i if i == len - 1 => partition_max(data, is_less),
@@ -917,31 +911,21 @@ where
                         } else if is_less(&data[p - 1], &data[p + 1]) {
                             partition_at_index(data, p, is_less)
                         } else {
-                            // If the element before the pivot is equal to the pivot, use the ternary
-                            // partitioning algorithm, which puts the elements equal to the pivot in the
+                            // If the element before the pivot is equal to the pivot, use the
+                            // ternary partitioning algorithm, which
+                            // puts the elements equal to the pivot in the
                             // middle. This is necessary to ensure that the algorithm terminates.
                             partition_at_index_eq(data, p, is_less)
                         }
                     }
                 }
-            },
-            5 => {
-                sort(data, [0, 1, 2, 3, 4], is_less);
-                (index, index)
             }
-            4 => {
-                sort(data, [0, 1, 2, 3], is_less);
-                (index, index)
-            }
-            3 => {
-                sort(data, [0, 1, 2], is_less);
-                (index, index)
-            }
-            2 => {
-                sort(data, [0, 1], is_less);
-                (index, index)
-            }
-            _ => (index, index),
+            6 => return sort(data, [0, 1, 2, 3, 4, 5], is_less),
+            5 => return sort(data, [0, 1, 2, 3, 4], is_less),
+            4 => return sort(data, [0, 1, 2, 3], is_less),
+            3 => return sort(data, [0, 1, 2], is_less),
+            2 => return sort(data, [0, 1], is_less),
+            _ => return,
         };
         // Recurse into the appropriate part of the slice or terminate if the pivot is in the
         // correct position.
