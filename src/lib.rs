@@ -9,16 +9,16 @@ use core::{
     mem::{ManuallyDrop, MaybeUninit},
     ptr,
 };
-use sort::{median, sort};
+use sort::{median_at, sort_at};
 use wyrand::WyRng;
 
 // When dropped, copies from `src` into `dest`.
-struct InsertionHole<T> {
+struct Hole<T> {
     src: *const T,
     dest: *mut T,
 }
 
-impl<T> Drop for InsertionHole<T> {
+impl<T> Drop for Hole<T> {
     fn drop(&mut self) {
         // SAFETY: This is a helper class. Please refer to its usage for correctness. Namely, one
         // must be sure that `src` and `dst` does not overlap as required by
@@ -27,6 +27,21 @@ impl<T> Drop for InsertionHole<T> {
             ptr::copy_nonoverlapping(self.src, self.dest, 1);
         }
     }
+}
+
+fn analyze<T, F>(data: &mut [T], is_less: &mut F, rng: &mut WyRng) -> usize
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    let (mut min, mut swaps) = (rng.bounded_usize(0, data.len()), 0);
+    for _ in 0..32 {
+        let index = rng.bounded_usize(0, data.len());
+        if is_less(&data[index], &data[min]) {
+            min = index;
+            swaps += 1;
+        }
+    }
+    swaps
 }
 
 /// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
@@ -55,7 +70,7 @@ where
         // Read the pivot into the stack. The read below is safe, because the pivot is the first
         // element in the slice.
         let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
-        let _pivot_guard = InsertionHole {
+        let _pivot_guard = Hole {
             src: &*tmp,
             dest: head,
         };
@@ -105,7 +120,7 @@ where
         // Read the pivot into the stack. The read below is safe, because the pivot is the first
         // element in the slice.
         let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
-        let _pivot_guard = InsertionHole {
+        let _pivot_guard = Hole {
             src: &*tmp,
             dest: head,
         };
@@ -777,8 +792,8 @@ where
     }
 
     // Initialize the minimum by scanning some elements.
-    sort(data, [0, data.len() - 1], is_less);
-    sort(data, [0, data.len() / 2], is_less);
+    sort_at(data, [0, data.len() - 1], is_less);
+    sort_at(data, [0, data.len() / 2], is_less);
 
     // The index of the last element that is equal to the minimum element.
     let min = data.as_mut_ptr();
@@ -839,8 +854,8 @@ where
     }
 
     // Initialize the maximum
-    sort(data, [data.len() - 1, 0], is_less);
-    sort(data, [data.len() / 2, 0], is_less);
+    sort_at(data, [data.len() - 1, 0], is_less);
+    sort_at(data, [data.len() / 2, 0], is_less);
 
     let max = data.as_mut_ptr();
     let mut elem = unsafe { max.add(1) };
@@ -896,41 +911,30 @@ where
 {
     assert!(index < data.len());
     let mut was: Option<&T> = None;
-    loop {
-        let len = data.len();
-        let (u, v) = match len {
-            7.. => {
-                match index {
-                    0 => partition_min(data, is_less),
-                    i if i == len - 1 => partition_max(data, is_less),
-                    _ => {
-                        let p = select_pivot(data, index, is_less, rng);
-                        if was.take().filter(|w| !is_less(w, &data[p])).is_some() {
-                            data.swap(p, 0);
-                            partition_min(data, is_less)
-                        } else if is_less(&data[p - 1], &data[p + 1]) {
-                            partition_at_index(data, p, is_less)
-                        } else {
-                            // If the element before the pivot is equal to the pivot, use the
-                            // ternary partitioning algorithm, which
-                            // puts the elements equal to the pivot in the
-                            // middle. This is necessary to ensure that the algorithm terminates.
-                            partition_at_index_eq(data, p, is_less)
-                        }
-                    }
+    while data.len() > 6 {
+        let (u, v) = match index {
+            0 => partition_min(data, is_less),
+            i if i == data.len() - 1 => partition_max(data, is_less),
+            _ => {
+                let p = select_pivot(data, index, is_less, rng);
+                if was.take().filter(|w| !is_less(w, &data[p])).is_some() {
+                    data.swap(p, 0);
+                    partition_min(data, is_less)
+                } else if is_less(&data[p - 2], &data[p + 2]) {
+                    partition_at_index(data, p, is_less)
+                } else {
+                    // If the element before the pivot is equal to the pivot, use the
+                    // ternary partitioning algorithm, which
+                    // puts the elements equal to the pivot in the
+                    // middle. This is necessary to ensure that the algorithm terminates.
+                    partition_at_index_eq(data, p, is_less)
                 }
             }
-            6 => return sort(data, [0, 1, 2, 3, 4, 5], is_less),
-            5 => return sort(data, [0, 1, 2, 3, 4], is_less),
-            4 => return sort(data, [0, 1, 2, 3], is_less),
-            3 => return sort(data, [0, 1, 2], is_less),
-            2 => return sort(data, [0, 1], is_less),
-            _ => return,
         };
         // Recurse into the appropriate part of the slice or terminate if the pivot is in the
         // correct position.
         if index < u {
-            (data, _) = data.split_at_mut(u);
+            data = data.split_at_mut(u).0;
         } else if index > v {
             index -= v + 1;
             let (head, tail) = data.split_at_mut(v + 1);
@@ -938,6 +942,14 @@ where
         } else {
             return;
         }
+    }
+    match data.len() {
+        6 => sort_at(data, [0, 1, 2, 3, 4, 5], is_less),
+        5 => sort_at(data, [0, 1, 2, 3, 4], is_less),
+        4 => sort_at(data, [0, 1, 2, 3], is_less),
+        3 => sort_at(data, [0, 1, 2], is_less),
+        2 => sort_at(data, [0, 1], is_less),
+        _ => (),
     }
 }
 
@@ -1039,7 +1051,7 @@ where
         len if len < 128 => {
             // The elements are s positions apart.
             let s = len / 5;
-            median(data, [0, s, 2 * s, 3 * s, 4 * s], is_less);
+            median_at(data, [0, s, 2 * s, 3 * s, 4 * s], is_less);
             2 * s
         }
         // For slices of size 128 to 1024, sort 5 groups of 5 elements each, then select the
@@ -1048,11 +1060,11 @@ where
             let s = len / 5;
             // Each group is `s` elements apart.
             for j in 0..5 {
-                sort(data, [j, s + j, 2 * s + j, 3 * s + j, 4 * s + j], is_less);
+                sort_at(data, [j, s + j, 2 * s + j, 3 * s + j, 4 * s + j], is_less);
             }
             // The pivot is the middle element of the group at position k.
             let k = s * ((5 * index) / len);
-            sort(data, [k, k + 1, k + 2, k + 3, k + 4], is_less);
+            sort_at(data, [k, k + 1, k + 2, k + 3, k + 4], is_less);
             k + 2
         }
         // For larger slices, a similar technique is used, but with randomly sampled elements and
@@ -1060,16 +1072,16 @@ where
         len if len < 4096 => {
             let sample = sample(data, 25, rng);
             for j in 0..5 {
-                sort(sample, [j, j + 5, j + 10, j + 15, j + 20], is_less);
+                sort_at(sample, [j, j + 5, j + 10, j + 15, j + 20], is_less);
             }
             let p = 5 * ((5 * index) / len);
-            sort(sample, [p, p + 1, p + 2, p + 3, p + 4], is_less);
+            sort_at(sample, [p, p + 1, p + 2, p + 3, p + 4], is_less);
             p + 2
         }
         len if len < 65536 => {
             let sample = sample(data, 81, rng);
             for j in 0..9 {
-                sort(
+                sort_at(
                     sample,
                     [
                         j,
@@ -1086,7 +1098,7 @@ where
                 );
             }
             let p = 9 * ((9 * index) / len);
-            sort(
+            sort_at(
                 sample,
                 [p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8],
                 is_less,
@@ -1096,7 +1108,7 @@ where
         len => {
             let sample = sample(data, 441, rng);
             for j in 0..21 {
-                sort(
+                sort_at(
                     sample,
                     [
                         j,
@@ -1125,7 +1137,7 @@ where
                 );
             }
             let p = 21 * ((21 * index) / len);
-            sort(
+            sort_at(
                 sample,
                 [
                     p,
