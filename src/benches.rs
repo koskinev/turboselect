@@ -54,19 +54,19 @@ fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
 #[derive(Debug)]
 struct Timings {
     runs: usize,
-    total: f32,
-    throughput: f32,
-    avg: f32,
-    min: f32,
-    max: f32,
-    median: f32,
+    total: f64,
+    throughput: f64,
+    avg: f64,
+    min: f64,
+    max: f64,
+    median: f64,
 }
 
 impl Timings {
-    fn from_times(data: &[f32]) -> Self {
+    fn from_times(data: &[u128]) -> Self {
         let runs = data.len();
-        let total: f32 = data.iter().sum();
-        let avg = total / runs as f32;
+        let total = data.iter().sum::<u128>() as f64 / 1_000_000_000.0_f64;
+        let avg = total / runs as f64;
         let min = *data
             .iter()
             .min_by(|a, b| a.partial_cmp(b).unwrap())
@@ -81,11 +81,11 @@ impl Timings {
         Self {
             runs,
             total,
-            throughput: runs as f32 / total,
+            throughput: runs as f64 / total,
             avg,
-            min,
-            max,
-            median,
+            min: min as f64 / 1_000_000_000.0_f64,
+            max: max as f64 / 1_000_000_000.0_f64,
+            median: median as f64 / 1_000_000_000.0_f64,
         }
     }
 }
@@ -93,7 +93,7 @@ impl Timings {
 #[derive(Debug)]
 struct Comparison {
     label: String,
-    throughput_ratio: f32,
+    throughput_ratio: f64,
     timings: Timings,
     baseline: Timings,
 }
@@ -109,9 +109,9 @@ impl Comparison {
     }
 }
 
-const MIN_DURATION: f32 = 5.0;
-const MIN_RUNS: usize = 200;
-const MAX_RUNS: usize = 50_000;
+const MIN_DURATION: u128 = 5 * 1_000_000_000;
+const MIN_RUNS: usize = 250;
+const MAX_RUNS: usize = 100_000;
 
 /// Runs `func` and `baseline` repeatedly with data prepared by `prep` until `func` has run for at
 /// least `duration` seconds. Prints the number of runs, the total time, and the average, minimum,
@@ -130,21 +130,21 @@ fn bench<D, P: FnMut() -> D, T: FnMut(&mut D), B: FnMut(&mut D), C: FnMut(D) -> 
 
     let mut times = Vec::new();
     let mut times_baseline = Vec::new();
-    let mut total = 0.0;
+    let mut total = 0;
     let mut rng = WyRng::new(123456789);
     while times.len() < MAX_RUNS && (total < MIN_DURATION || times.len() < MIN_RUNS) {
         let mut data = prep();
         if rng.u64() < u64::MAX / 2 {
             let now = Instant::now();
             test(black_box(&mut data));
-            let elapsed = now.elapsed().as_secs_f32();
+            let elapsed = now.elapsed().as_nanos();
             times.push(elapsed);
             total += elapsed;
             assert!(black_box(check(data)));
         } else {
             let now = Instant::now();
             baseline(black_box(&mut data));
-            let elapsed = now.elapsed().as_secs_f32();
+            let elapsed = now.elapsed().as_nanos();
             times_baseline.push(elapsed);
             assert!(black_box(check(data)));
         }
@@ -176,7 +176,7 @@ fn quickselect_perf() {
         P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
         T: Ord,
     {
-        let counts = [1_000, 10_000 /* 1_000_000, 100_000_000 */];
+        let counts = [1_000, 10_000, 1_000_000, 100_000_000];
         let p001 = |count: usize| count / 1000;
         let p01 = |count: usize| count / 100;
         let p05 = |count: usize| count / 20;
