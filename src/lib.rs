@@ -901,41 +901,6 @@ where
     (last - dups, last)
 }
 
-/// A reference to a previous pivot.
-enum Was<'a, T> {
-    /// No previous pivot.
-    None,
-    /// The previous pivot was the element before current sub-slice.
-    Before(&'a T),
-    /// The previous pivot was the element after the current sub-slice.
-    After(&'a T),
-}
-
-impl<'a, T> Was<'a, T> {
-    /// Returns `Was::Before` if `value` is `Some` and `Was::None` otherwise.
-    fn before(value: Option<&'a T>) -> Self {
-        match value {
-            Some(value) => Was::Before(value),
-            None => Was::None,
-        }
-    }
-
-    /// Returns `Was::After` if `value` is `Some` and `Was::None` otherwise.
-    fn after(value: Option<&'a T>) -> Self {
-        match value {
-            Some(value) => Was::After(value),
-            None => Was::None,
-        }
-    }
-
-    /// Returns the value of `self` and replaces it with `Was::None`.
-    fn take(&mut self) -> Self {
-        let mut out = Self::None;
-        core::mem::swap(self, &mut out);
-        out
-    }
-}
-
 /// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
@@ -1086,14 +1051,15 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     match data.len() {
-        // If the slice is small, just use the middle element as the pivot.
-        len if len < 32 => len / 2,
+        // If the slice is small, use median of three.
+        len if len < 32 => {
+            median_at(data, [0, len / 2, len - 1], is_less);
+            len / 2
+        }
         // For slightly larger slices, use the median of 5 elements.
         len if len < 128 => {
-            // The elements are s positions apart.
-            let s = len / 5;
-            median_at(data, [0, s, 2 * s, 3 * s, 4 * s], is_less);
-            2 * s
+            median_at(data, [0, len / 4, len / 2, (3 * len) / 4, len - 1], is_less);
+            len / 2
         }
         // For slices of size 128 to 1024, sort 5 groups of 5 elements each, then select the
         // group based on the index, sort the group and return the position of the middle element.
@@ -1122,19 +1088,10 @@ where
         len if len < 65536 => {
             let sample = sample(data, 81, rng);
             for j in 0..9 {
+                #[rustfmt::skip]
                 sort_at(
                     sample,
-                    [
-                        j,
-                        j + 9,
-                        j + 18,
-                        j + 27,
-                        j + 36,
-                        j + 45,
-                        j + 54,
-                        j + 63,
-                        j + 72,
-                    ],
+                    [j, j + 9, j + 18, j + 27, j + 36, j + 45, j + 54, j + 63, j + 72],
                     is_less,
                 );
             }
@@ -1149,58 +1106,24 @@ where
         len => {
             let sample = sample(data, 441, rng);
             for j in 0..21 {
+                #[rustfmt::skip]
                 sort_at(
                     sample,
                     [
-                        j,
-                        j + 21,
-                        j + 42,
-                        j + 63,
-                        j + 84,
-                        j + 105,
-                        j + 126,
-                        j + 147,
-                        j + 168,
-                        j + 189,
-                        j + 210,
-                        j + 231,
-                        j + 252,
-                        j + 273,
-                        j + 294,
-                        j + 315,
-                        j + 336,
-                        j + 357,
-                        j + 378,
-                        j + 399,
-                        j + 420,
+                        j, j + 21, j + 42, j + 63, j + 84, j + 105, j + 126, j + 147, j + 168, 
+                        j + 189, j + 210, j + 231, j + 252, j + 273, j + 294, j + 315, j + 336, 
+                        j + 357, j + 378, j + 399, j + 420,
                     ],
                     is_less,
                 );
             }
             let p = 21 * ((21 * index) / len);
+            #[rustfmt::skip]
             sort_at(
                 sample,
                 [
-                    p,
-                    p + 1,
-                    p + 2,
-                    p + 3,
-                    p + 4,
-                    p + 5,
-                    p + 6,
-                    p + 7,
-                    p + 8,
-                    p + 9,
-                    p + 10,
-                    p + 11,
-                    p + 12,
-                    p + 13,
-                    p + 14,
-                    p + 15,
-                    p + 16,
-                    p + 17,
-                    p + 18,
-                    p + 19,
+                    p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8, p + 9, p + 10, 
+                    p + 11, p + 12, p + 13, p + 14, p + 15, p + 16, p + 17, p + 18, p + 19, 
                     p + 20,
                 ],
                 is_less,
