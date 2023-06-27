@@ -27,7 +27,7 @@ where
 /// Reorders the element at the positions in `pos` so that the median becomes `pos[N / 2]`.
 /// Element at `pos[i]` is less than or equal to the element at `pos[N / 2]` for all `i < N / 2`
 /// and greater than or equal to the element at `pos[N / 2]` for all `i > N / 2`.
-pub(crate) fn median<T, F, const N: usize>(data: &mut [T], pos: [usize; N], is_less: &mut F)
+pub(crate) fn median_at<T, F, const N: usize>(data: &mut [T], pos: [usize; N], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -167,9 +167,10 @@ where
     }
 }
 
+
 /// Sorts the elements at the positions in `pos` so that the smallest element becomes `pos[0]` and
 /// each element `pos[i]` is less than or equal to the element at `pos[j]` if `i < j`.
-pub(crate) fn sort<T, F, const N: usize>(data: &mut [T], pos: [usize; N], is_less: &mut F)
+pub(crate) fn sort_at<T, F, const N: usize>(data: &mut [T], pos: [usize; N], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
