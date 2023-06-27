@@ -888,7 +888,7 @@ where
                 } else if !is_less(&*elem.add(offset), &*max) {
                     // We found an element equal to the maximum
                     dups += 1;
-                    if dups < max.offset_from(elem.add(offset)) as usize {
+                    if dups < stop.offset_from(elem.add(offset)) as usize {
                         ptr::swap_nonoverlapping(elem.add(offset), stop.sub(dups), 1);
                     }
                 }
@@ -896,9 +896,44 @@ where
             elem = elem.add(block);
         }
         // Place the maximum at the end of the slice.
-        ptr::swap_nonoverlapping(max, stop.sub(dups + 1), 1);
+        ptr::swap(max, stop.sub(dups + 1));
     }
     (last - dups, last)
+}
+
+/// A reference to a previous pivot.
+enum Was<'a, T> {
+    /// No previous pivot.
+    None,
+    /// The previous pivot was the element before current sub-slice.
+    Before(&'a T),
+    /// The previous pivot was the element after the current sub-slice.
+    After(&'a T),
+}
+
+impl<'a, T> Was<'a, T> {
+    /// Returns `Was::Before` if `value` is `Some` and `Was::None` otherwise.
+    fn before(value: Option<&'a T>) -> Self {
+        match value {
+            Some(value) => Was::Before(value),
+            None => Was::None,
+        }
+    }
+
+    /// Returns `Was::After` if `value` is `Some` and `Was::None` otherwise.
+    fn after(value: Option<&'a T>) -> Self {
+        match value {
+            Some(value) => Was::After(value),
+            None => Was::None,
+        }
+    }
+
+    /// Returns the value of `self` and replaces it with `Was::None`.
+    fn take(&mut self) -> Self {
+        let mut out = Self::None;
+        core::mem::swap(self, &mut out);
+        out
+    }
 }
 
 /// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
@@ -910,31 +945,37 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     assert!(index < data.len());
-    let mut was: Option<&T> = None;
+    let mut was = None;
     while data.len() > 6 {
         let (u, v) = match index {
             0 => partition_min(data, is_less),
             i if i == data.len() - 1 => partition_max(data, is_less),
             _ => {
                 let p = select_pivot(data, index, is_less, rng);
-                if was.take().filter(|w| !is_less(w, &data[p])).is_some() {
-                    data.swap(p, 0);
-                    partition_min(data, is_less)
-                } else if is_less(&data[p - 2], &data[p + 2]) {
-                    partition_at_index(data, p, is_less)
-                } else {
-                    // If the element before the pivot is equal to the pivot, use the
-                    // ternary partitioning algorithm, which
-                    // puts the elements equal to the pivot in the
+                match was {
+                    // If the elements around the pivot are in ascending order, use the
+                    // default binary partitioning.
+                    _ if is_less(&data[p - 2], &data[p + 2]) => {
+                        partition_at_index(data, p, is_less)
+                    }
+                    // If the selected pivot is equal to the previous, and the previous pivot is on
+                    // the left, the pivot is the minimum.
+                    Some(w) if !is_less(w, &data[p]) => {
+                        data.swap(p, 0);
+                        partition_min(data, is_less)
+                    }
+                    // The selected pivot is equal to it's neighbor elements. Use ternary
+                    // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
-                    partition_at_index_eq(data, p, is_less)
+                    _ => partition_at_index_eq(data, p, is_less),
                 }
             }
         };
         // Recurse into the appropriate part of the slice or terminate if the pivot is in the
         // correct position.
         if index < u {
-            data = data.split_at_mut(u).0;
+            let (head, _tail) = data.split_at_mut(u);
+            data = head;
         } else if index > v {
             index -= v + 1;
             let (head, tail) = data.split_at_mut(v + 1);
