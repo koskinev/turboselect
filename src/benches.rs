@@ -161,11 +161,12 @@ fn quickselect_perf() {
     // cargo flamegraph --unit-test -- quickselect_perf --ignored
 
     let mut runs = Vec::new();
+    let min_duration = MIN_DURATION as f64 / 1_000_000_000_f64;
 
     eprintln!(
         "Comparing quickselect with custom pivot selection to core::slice::select_nth_unstable."
     );
-    eprintln!("Running each benchmark for at least {MIN_DURATION:.2} seconds and at least {MIN_RUNS} times. The tests and the baseline runs are randomly interleaved.");
+    eprintln!("Running each benchmark for at least {min_duration:.2} seconds and at least {MIN_RUNS} times. The tests and the baseline runs are randomly interleaved.");
     eprintln!("Data preparation is ignored in the timing.\n");
 
     eprintln!("| data type          | slice length | index       | throughput, runs/sec | baseline, runs/sec | ratio |");
