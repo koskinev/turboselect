@@ -285,6 +285,7 @@ where
         let count = core::cmp::min(width(start_l, end_l), width(start_r, end_r));
 
         if count > 0 {
+            if count < BLOCK {
             macro_rules! left {
                 () => {
                     l.add(usize::from(*start_l))
@@ -296,23 +297,24 @@ where
                 };
             }
 
-            // Instead of swapping one pair at the time, it is more efficient to perform a cyclic
-            // permutation. This is not strictly equivalent to swapping, but produces a similar
-            // result using fewer memory operations.
+                // Instead of swapping one pair at the time, it is more efficient to perform a
+                // cyclic permutation. This is not strictly equivalent to swapping,
+                // but produces a similar result using fewer memory operations.
 
             // SAFETY: The use of `ptr::read` is valid because there is at least one element in
             // both `offsets_l` and `offsets_r`, so `left!` is a valid pointer to read from.
             //
             // The uses of `left!` involve calls to `offset` on `l`, which points to the
-            // beginning of `v`. All the offsets pointed-to by `start_l` are at most `block_l`, so
-            // these `offset` calls are safe as all reads are within the block. The same argument
-            // applies for the uses of `right!`.
+                // beginning of `v`. All the offsets pointed-to by `start_l` are at most `block_l`,
+                // so these `offset` calls are safe as all reads are within the
+                // block. The same argument applies for the uses of `right!`.
             //
-            // The calls to `start_l.offset` are valid because there are at most `count-1` of them,
-            // plus the final one at the end of the unsafe block, where `count` is the minimum
-            // number of collected offsets in `offsets_l` and `offsets_r`, so there is
-            // no risk of there not being enough elements. The same reasoning applies to
-            // the calls to `start_r.offset`.
+                // The calls to `start_l.offset` are valid because there are at most `count-1` of
+                // them, plus the final one at the end of the unsafe block, where
+                // `count` is the minimum number of collected offsets in `offsets_l`
+                // and `offsets_r`, so there is no risk of there not being enough
+                // elements. The same reasoning applies to the calls to
+                // `start_r.offset`.
             //
             // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
             // guaranteed not to overlap, and are valid because of the reasoning above.
@@ -331,6 +333,14 @@ where
                 core::mem::forget(tmp);
                 start_l = start_l.add(1);
                 start_r = start_r.add(1);
+            }
+            } else {
+                // If both blocks are full, we can swap them as a whole.
+                unsafe {
+                    ptr::swap_nonoverlapping(l, r.sub(BLOCK), BLOCK);
+                    start_l = end_l;
+                    start_r = end_r;
+                }
             }
         }
 
@@ -460,17 +470,6 @@ where
     // `q` tracks the element after the last element greater than the higher pivot
     let mut q = r;
 
-    // unsafe {
-    //     while p < e && !is_less(&*p, low) && !is_less(low, &*p) {
-    //         p = p.add(1);
-    //     }
-    //     while q.sub(1) > p && !is_less(high, &*(q.sub(1))) && !is_less(&*(q.sub(1)), high) {
-    //         q = q.sub(1);
-    //     }
-    // }
-    // l = p;
-    // r = q;
-
     // FIXME: When we get VLAs, try creating one array of length `min(v.len(), 2 * BLOCK)` rather
     // than two fixed-size arrays of length `BLOCK`. VLAs might be more cache-efficient.
 
@@ -591,23 +590,24 @@ where
                 };
             }
 
-            // Instead of swapping one pair at the time, it is more efficient to perform a cyclic
-            // permutation. This is not strictly equivalent to swapping, but produces a similar
-            // result using fewer memory operations.
+                // Instead of swapping one pair at the time, it is more efficient to perform a
+                // cyclic permutation. This is not strictly equivalent to swapping,
+                // but produces a similar result using fewer memory operations.
 
             // SAFETY: The use of `ptr::read` is valid because there is at least one element in
             // both `offsets_l` and `offsets_r`, so `left!` is a valid pointer to read from.
             //
             // The uses of `left!` involve calls to `offset` on `l`, which points to the
-            // beginning of `v`. All the offsets pointed-to by `start_l` are at most `block_l`, so
-            // these `offset` calls are safe as all reads are within the block. The same argument
-            // applies for the uses of `right!`.
+                // beginning of `v`. All the offsets pointed-to by `start_l` are at most `block_l`,
+                // so these `offset` calls are safe as all reads are within the
+                // block. The same argument applies for the uses of `right!`.
             //
-            // The calls to `start_l.offset` are valid because there are at most `count-1` of them,
-            // plus the final one at the end of the unsafe block, where `count` is the minimum
-            // number of collected offsets in `offsets_l` and `offsets_r`, so there is
-            // no risk of there not being enough elements. The same reasoning applies to
-            // the calls to `start_r.offset`.
+                // The calls to `start_l.offset` are valid because there are at most `count-1` of
+                // them, plus the final one at the end of the unsafe block, where
+                // `count` is the minimum number of collected offsets in `offsets_l`
+                // and `offsets_r`, so there is no risk of there not being enough
+                // elements. The same reasoning applies to the calls to
+                // `start_r.offset`.
             //
             // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
             // guaranteed not to overlap, and are valid because of the reasoning above.
@@ -1110,9 +1110,9 @@ where
                 sort_at(
                     sample,
                     [
-                        j, j + 21, j + 42, j + 63, j + 84, j + 105, j + 126, j + 147, j + 168, 
-                        j + 189, j + 210, j + 231, j + 252, j + 273, j + 294, j + 315, j + 336, 
-                        j + 357, j + 378, j + 399, j + 420,
+                        j, j + 21, j + 42, j + 63, j + 84, j + 105, j + 126, j + 147,
+                        j + 168, j + 189, j + 210, j + 231, j + 252, j + 273, j + 294,
+                        j + 315, j + 336, j + 357, j + 378, j + 399, j + 420,
                     ],
                     is_less,
                 );
@@ -1122,9 +1122,9 @@ where
             sort_at(
                 sample,
                 [
-                    p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8, p + 9, p + 10, 
-                    p + 11, p + 12, p + 13, p + 14, p + 15, p + 16, p + 17, p + 18, p + 19, 
-                    p + 20,
+                    p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8, p + 9,
+                    p + 10, p + 11, p + 12, p + 13, p + 14, p + 15, p + 16, p + 17,
+                    p + 18, p + 19, p + 20,
                 ],
                 is_less,
             );
