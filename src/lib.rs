@@ -29,21 +29,6 @@ impl<T> Drop for Hole<T> {
     }
 }
 
-fn analyze<T, F>(data: &mut [T], is_less: &mut F, rng: &mut WyRng) -> usize
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let (mut min, mut swaps) = (rng.bounded_usize(0, data.len()), 0);
-    for _ in 0..32 {
-        let index = rng.bounded_usize(0, data.len());
-        if is_less(&data[index], &data[min]) {
-            min = index;
-            swaps += 1;
-        }
-    }
-    swaps
-}
-
 /// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
 /// where `u` is the number of elements less than the pivot, and the index of the pivot after
 /// partitioning.
@@ -286,54 +271,54 @@ where
 
         if count > 0 {
             if count < BLOCK {
-            macro_rules! left {
-                () => {
-                    l.add(usize::from(*start_l))
-                };
-            }
-            macro_rules! right {
-                () => {
-                    r.sub(usize::from(*start_r) + 1)
-                };
-            }
+                macro_rules! left {
+                    () => {
+                        l.add(usize::from(*start_l))
+                    };
+                }
+                macro_rules! right {
+                    () => {
+                        r.sub(usize::from(*start_r) + 1)
+                    };
+                }
 
                 // Instead of swapping one pair at the time, it is more efficient to perform a
                 // cyclic permutation. This is not strictly equivalent to swapping,
                 // but produces a similar result using fewer memory operations.
 
-            // SAFETY: The use of `ptr::read` is valid because there is at least one element in
-            // both `offsets_l` and `offsets_r`, so `left!` is a valid pointer to read from.
-            //
-            // The uses of `left!` involve calls to `offset` on `l`, which points to the
+                // SAFETY: The use of `ptr::read` is valid because there is at least one element in
+                // both `offsets_l` and `offsets_r`, so `left!` is a valid pointer to read from.
+                //
+                // The uses of `left!` involve calls to `offset` on `l`, which points to the
                 // beginning of `v`. All the offsets pointed-to by `start_l` are at most `block_l`,
                 // so these `offset` calls are safe as all reads are within the
                 // block. The same argument applies for the uses of `right!`.
-            //
+                //
                 // The calls to `start_l.offset` are valid because there are at most `count-1` of
                 // them, plus the final one at the end of the unsafe block, where
                 // `count` is the minimum number of collected offsets in `offsets_l`
                 // and `offsets_r`, so there is no risk of there not being enough
                 // elements. The same reasoning applies to the calls to
                 // `start_r.offset`.
-            //
-            // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
-            // guaranteed not to overlap, and are valid because of the reasoning above.
-            unsafe {
-                let tmp = ptr::read(left!());
-                ptr::copy_nonoverlapping(right!(), left!(), 1);
-
-                for _ in 1..count {
-                    start_l = start_l.add(1);
-                    ptr::copy_nonoverlapping(left!(), right!(), 1);
-                    start_r = start_r.add(1);
+                //
+                // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
+                // guaranteed not to overlap, and are valid because of the reasoning above.
+                unsafe {
+                    let tmp = ptr::read(left!());
                     ptr::copy_nonoverlapping(right!(), left!(), 1);
-                }
 
-                ptr::copy_nonoverlapping(&tmp, right!(), 1);
-                core::mem::forget(tmp);
-                start_l = start_l.add(1);
-                start_r = start_r.add(1);
-            }
+                    for _ in 1..count {
+                        start_l = start_l.add(1);
+                        ptr::copy_nonoverlapping(left!(), right!(), 1);
+                        start_r = start_r.add(1);
+                        ptr::copy_nonoverlapping(right!(), left!(), 1);
+                    }
+
+                    ptr::copy_nonoverlapping(&tmp, right!(), 1);
+                    core::mem::forget(tmp);
+                    start_l = start_l.add(1);
+                    start_r = start_r.add(1);
+                }
             } else {
                 // If both blocks are full, we can swap them as a whole.
                 unsafe {
@@ -590,24 +575,24 @@ where
                 };
             }
 
-                // Instead of swapping one pair at the time, it is more efficient to perform a
-                // cyclic permutation. This is not strictly equivalent to swapping,
-                // but produces a similar result using fewer memory operations.
+            // Instead of swapping one pair at the time, it is more efficient to perform a
+            // cyclic permutation. This is not strictly equivalent to swapping,
+            // but produces a similar result using fewer memory operations.
 
             // SAFETY: The use of `ptr::read` is valid because there is at least one element in
             // both `offsets_l` and `offsets_r`, so `left!` is a valid pointer to read from.
             //
             // The uses of `left!` involve calls to `offset` on `l`, which points to the
-                // beginning of `v`. All the offsets pointed-to by `start_l` are at most `block_l`,
-                // so these `offset` calls are safe as all reads are within the
-                // block. The same argument applies for the uses of `right!`.
+            // beginning of `v`. All the offsets pointed-to by `start_l` are at most `block_l`,
+            // so these `offset` calls are safe as all reads are within the
+            // block. The same argument applies for the uses of `right!`.
             //
-                // The calls to `start_l.offset` are valid because there are at most `count-1` of
-                // them, plus the final one at the end of the unsafe block, where
-                // `count` is the minimum number of collected offsets in `offsets_l`
-                // and `offsets_r`, so there is no risk of there not being enough
-                // elements. The same reasoning applies to the calls to
-                // `start_r.offset`.
+            // The calls to `start_l.offset` are valid because there are at most `count-1` of
+            // them, plus the final one at the end of the unsafe block, where
+            // `count` is the minimum number of collected offsets in `offsets_l`
+            // and `offsets_r`, so there is no risk of there not being enough
+            // elements. The same reasoning applies to the calls to
+            // `start_r.offset`.
             //
             // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
             // guaranteed not to overlap, and are valid because of the reasoning above.
@@ -1065,12 +1050,12 @@ where
         // group based on the index, sort the group and return the position of the middle element.
         len if len < 1024 => {
             let s = len / 5;
+            let k = s * ((5 * index) / len);
             // Each group is `s` elements apart.
             for j in 0..5 {
                 sort_at(data, [j, s + j, 2 * s + j, 3 * s + j, 4 * s + j], is_less);
             }
             // The pivot is the middle element of the group at position k.
-            let k = s * ((5 * index) / len);
             sort_at(data, [k, k + 1, k + 2, k + 3, k + 4], is_less);
             k + 2
         }
@@ -1078,15 +1063,16 @@ where
         // larger group sizes.
         len if len < 4096 => {
             let sample = sample(data, 25, rng);
+            let p = 5 * ((5 * index) / len);
             for j in 0..5 {
                 sort_at(sample, [j, j + 5, j + 10, j + 15, j + 20], is_less);
             }
-            let p = 5 * ((5 * index) / len);
             sort_at(sample, [p, p + 1, p + 2, p + 3, p + 4], is_less);
             p + 2
         }
         len if len < 65536 => {
             let sample = sample(data, 81, rng);
+            let p = 9 * ((9 * index) / len);
             for j in 0..9 {
                 #[rustfmt::skip]
                 sort_at(
@@ -1095,7 +1081,6 @@ where
                     is_less,
                 );
             }
-            let p = 9 * ((9 * index) / len);
             sort_at(
                 sample,
                 [p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8],
@@ -1105,6 +1090,7 @@ where
         }
         len => {
             let sample = sample(data, 441, rng);
+            let p = 21 * ((21 * index) / len);
             for j in 0..21 {
                 #[rustfmt::skip]
                 sort_at(
@@ -1117,7 +1103,6 @@ where
                     is_less,
                 );
             }
-            let p = 21 * ((21 * index) / len);
             #[rustfmt::skip]
             sort_at(
                 sample,
