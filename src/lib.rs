@@ -807,11 +807,11 @@ where
     let r = unsafe { l.add(data.len()) };
     let mut elem = unsafe { l.add(1) };
     let mut tmp = unsafe { ManuallyDrop::new(ptr::read(l)) };
-    let _pivot_guard = HoleMut {
+    let guard = HoleMut {
         src: &mut *tmp,
         dest: l,
     };
-    let min = &mut *tmp;
+    let min = guard.src;
 
     let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
     let mut start = offsets.as_mut_ptr().cast();
@@ -825,17 +825,17 @@ where
             // Scan the block and store offsets to the elements less than or equal <= minimum.
             for offset in 0..block {
                 end.write(offset as u8);
-                let is_le = !is_less(min, &*elem.add(offset));
+                let is_le = !is_less(&*min, &*elem.add(offset));
                 end = end.add(is_le as usize);
             }
             // Scan the found elements
             for _ in 0..width(start, end) {
                 let offset = start.read() as usize;
-                if is_less(&*elem.add(offset), min) {
+                if is_less(&*elem.add(offset), &*min) {
                     // We found a new minimum.
                     dups = 0;
                     ptr::swap_nonoverlapping(elem.add(offset), min, 1);
-                } else if !is_less(min, &*elem.add(offset)) {
+                } else if !is_less(&*min, &*elem.add(offset)) {
                     // We found an element equal to the minimum.
                     dups += 1;
                     if dups < elem.add(offset).offset_from(l) as usize {
