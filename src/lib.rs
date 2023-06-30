@@ -777,8 +777,9 @@ where
 }
 
 /// Puts the minimum elements at the beginning of the slice and returns the indices of the first and
-/// last elements equal to the minimum.
-fn partition_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+/// last elements equal to the minimum. The `init` argument is the index of the element to use as
+/// the initial minimum.
+fn partition_min<T, F>(data: &mut [T], init: usize, is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -796,6 +797,7 @@ where
     }
 
     // Initialize the minimum by scanning some elements.
+    data.swap(0, init);
     sort_at(data, [0, data.len() - 1], is_less);
     sort_at(data, [0, data.len() / 2], is_less);
     sort_at(data, [0, data.len() / 3], is_less);
@@ -851,12 +853,13 @@ where
 }
 
 /// Puts the maximum elements at the end of the slice and returns the indices of the first and
-/// last elements equal to the maximum.
-fn partition_max<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+/// last elements equal to the maximum. The `init` argument is the index of the element to use as
+/// the initial maximum.
+fn partition_max<T, F>(data: &mut [T], init: usize, is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let (_, v) = partition_min(data, &mut |x, y| is_less(y, x));
+    let (_, v) = partition_min(data, init, &mut |x, y| is_less(y, x));
     let len = data.len();
     let count = (v + 1).min(len - v - 1);
     let (head, tail) = data.split_at_mut(len - count);
@@ -876,8 +879,8 @@ where
     let mut was = None;
     while data.len() > 6 {
         let (u, v) = match index {
-            0 => partition_min(data, is_less),
-            i if i == data.len() - 1 => partition_max(data, is_less),
+            0 => partition_min(data, 0, is_less),
+            i if i == data.len() - 1 => partition_max(data, 0, is_less),
             _ => {
                 let (p, r) = select_pivot(data, index, is_less, rng);
                 match was {
@@ -888,10 +891,7 @@ where
                     }
                     // If the selected pivot is equal to the previous, and the previous pivot is on
                     // the left, the pivot is the minimum.
-                    Some(w) if !is_less(w, &data[p]) => {
-                        data.swap(p, 0);
-                        partition_min(data, is_less)
-                    }
+                    Some(w) if !is_less(w, &data[p]) => partition_min(data, p, is_less),
                     // The selected pivot is equal to it's neighbor elements. Use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.

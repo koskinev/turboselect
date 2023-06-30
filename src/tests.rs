@@ -272,7 +272,7 @@ fn min_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (_u, v) = partition_min(data.as_mut_slice(), &mut usize::lt);
+        let (_u, v) = partition_min(data.as_mut_slice(), 0, &mut usize::lt);
         let min = &data[0];
         for (i, elem) in data.iter().enumerate() {
             if i <= v {
@@ -287,7 +287,7 @@ fn min_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_min(data.as_mut_slice(), &mut usize::lt);
+    let (u, v) = partition_min(data.as_mut_slice(), 0, &mut usize::lt);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
@@ -305,7 +305,7 @@ fn max_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (u, _v) = partition_max(data.as_mut_slice(), &mut usize::lt);
+        let (u, _v) = partition_max(data.as_mut_slice(), 0, &mut usize::lt);
         let max = &data[u];
         for (i, elem) in data.iter().enumerate() {
             if i >= u {
@@ -320,7 +320,7 @@ fn max_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_max(data.as_mut_slice(), &mut usize::lt);
+    let (u, v) = partition_max(data.as_mut_slice(), 0, &mut usize::lt);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
