@@ -879,11 +879,11 @@ where
             0 => partition_min(data, is_less),
             i if i == data.len() - 1 => partition_max(data, is_less),
             _ => {
-                let p = select_pivot(data, index, is_less, rng);
+                let (p, r) = select_pivot(data, index, is_less, rng);
                 match was {
                     // If the elements around the pivot are in ascending order, use the
                     // default binary partitioning.
-                    _ if is_less(&data[p - 2], &data[p + 2]) => {
+                    _ if is_less(&data[p - r], &data[p + r]) => {
                         partition_at_index(data, p, is_less)
                     }
                     // If the selected pivot is equal to the previous, and the previous pivot is on
@@ -1008,34 +1008,55 @@ where
     (left, pivot, right)
 }
 
-/// Selects the pivot element for partitioning the slice. Returns the position of the pivot.
-fn select_pivot<T, F>(data: &mut [T], index: usize, is_less: &mut F, rng: &mut WyRng) -> usize
+/// Selects the pivot element for partitioning the slice. Returns `(p, r)` where `p` is the index
+/// of the pivot element and `r` is number neighbor elements, used to test for equality.
+fn select_pivot<T, F>(
+    data: &mut [T],
+    index: usize,
+    is_less: &mut F,
+    rng: &mut WyRng,
+) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
     match data.len() {
         // If the slice is small, use median of three.
         len if len < 32 => {
-            median_at(data, [0, len / 2, len - 1], is_less);
-            len / 2
+            let p = len / 2;
+            median_at(data, [0, p, len - 1], is_less);
+            sort_at(data, [p - 2, p - 1, p, p + 1, p + 2], is_less);
+            (p, 1)
         }
         // For slightly larger slices, use the median of 5 elements.
         len if len < 128 => {
-            median_at(data, [0, len / 4, len / 2, (3 * len) / 4, len - 1], is_less);
-            len / 2
+            let p = len / 2;
+            median_at(data, [0, p / 2, p, p + p / 2, len - 1], is_less);
+            sort_at(data, [p - 2, p - 1, p, p + 1, p + 2], is_less);
+            (p, 1)
         }
         // For slices of size 128 to 1024, sort 5 groups of 5 elements each, then select the
         // group based on the index, sort the group and return the position of the middle element.
         len if len < 1024 => {
             let s = len / 5;
-            let k = s * ((5 * index) / len);
+            let o = s / 2;
+            let p = s * ((5 * index) / len) + o;
             // Each group is `s` elements apart.
             for j in 0..5 {
-                sort_at(data, [j, s + j, 2 * s + j, 3 * s + j, 4 * s + j], is_less);
+                sort_at(
+                    data,
+                    [
+                        o + j,
+                        s + o + j,
+                        2 * s + o + j,
+                        3 * s + o + j,
+                        4 * s + o + j,
+                    ],
+                    is_less,
+                );
             }
             // The pivot is the middle element of the group at position k.
-            sort_at(data, [k, k + 1, k + 2, k + 3, k + 4], is_less);
-            k + 2
+            sort_at(data, [p, p + 1, p + 2, p + 3, p + 4], is_less);
+            (p + 2, 2)
         }
         // For larger slices, a similar technique is used, but with randomly sampled elements and
         // larger group sizes.
@@ -1046,7 +1067,7 @@ where
                 sort_at(sample, [j, j + 5, j + 10, j + 15, j + 20], is_less);
             }
             sort_at(sample, [p, p + 1, p + 2, p + 3, p + 4], is_less);
-            p + 2
+            (p + 2, 2)
         }
         len if len < 65536 => {
             let sample = sample(data, 81, rng);
@@ -1064,7 +1085,7 @@ where
                 [p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8],
                 is_less,
             );
-            p + 4
+            (p + 4, 4)
         }
         len => {
             let sample = sample(data, 441, rng);
@@ -1091,7 +1112,7 @@ where
                 ],
                 is_less,
             );
-            p + 10
+            (p + 10, 10)
         }
     }
 }
