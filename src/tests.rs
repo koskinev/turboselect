@@ -207,10 +207,10 @@ fn nth() {
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
         quickselect(&mut data, index, &mut usize::lt, rng.as_mut());
-        let nth = data[index];
+        let nth = &data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
-            i if i < index => assert!(elem <= &nth),
-            i if i > index => assert!(elem >= &nth),
+            i if i < index && elem > nth => panic!("{} > {} at {}", elem, nth, i),
+            i if i > index && nth > elem => panic!("{} > {} at {}", nth, elem, i),
             _ => (),
         });
     }
