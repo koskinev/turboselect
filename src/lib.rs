@@ -1041,18 +1041,8 @@ where
             let o = s / 2;
             let p = s * ((5 * index) / len) + o;
             // Each group is `s` elements apart.
-            for j in 0..5 {
-                sort_at(
-                    data,
-                    [
-                        o + j,
-                        s + o + j,
-                        2 * s + o + j,
-                        3 * s + o + j,
-                        4 * s + o + j,
-                    ],
-                    is_less,
-                );
+            for j in o..o + 5 {
+                sort_at(data, [j, s + j, 2 * s + j, 3 * s + j, 4 * s + j], is_less);
             }
             // The pivot is the middle element of the group at position k.
             sort_at(data, [p, p + 1, p + 2, p + 3, p + 4], is_less);
