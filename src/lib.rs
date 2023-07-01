@@ -882,29 +882,32 @@ where
             0 => partition_min(data, 0, is_less),
             i if i == data.len() - 1 => partition_max(data, 0, is_less),
             _ => {
-                let (p, r) = select_pivot(data, index, is_less, rng);
+                let (p, all_eq) = select_pivot(data, index, is_less, rng);
                 match was {
-                    // If the elements around the pivot are in ascending order, use the
-                    // default binary partitioning.
-                    _ if is_less(&data[p - r], &data[p + r]) => {
-                        partition_at_index(data, p, is_less)
-                    }
-                    // If the selected pivot is equal to the previous, and the previous pivot is on
-                    // the left, the pivot is the minimum.
-                    Some(w) if !is_less(w, &data[p]) => partition_min(data, p, is_less),
-                    // The selected pivot is equal to it's neighbor elements. Use ternary
+                    // If the selected pivot is equal to it's neighbor elements, use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
-                    _ => partition_at_index_eq(data, p, is_less),
+                    _ if all_eq => partition_at_index_eq(data, p, is_less),
+
+                    // Test if the selected pivot is equal to a previous pivot from the left. In
+                    // this case we know that the pivot is the minimum of the current slice.
+                    Some(w) if !is_less(w, &data[p]) => partition_min(data, p, is_less),
+
+                    // Otherwise, use the default binary partioning.
+                    _ => partition_at_index(data, p, is_less),
                 }
             }
         };
-        // Recurse into the appropriate part of the slice or terminate if the pivot is in the
+        // Descend into the appropriate part of the slice or terminate if the pivot is in the
         // correct position.
         if index < u {
+            // Select the left part. We don't store the pivot, since all elements on the left are
+            // smaller than the pivot.
             let (head, _tail) = data.split_at_mut(u);
             data = head;
         } else if index > v {
+            // Select the right part. Elements on the right can be equal to the pivot,
+            // so we store it.
             index -= v + 1;
             let (head, tail) = data.split_at_mut(v + 1);
             (data, was) = (tail, head.last());
@@ -1008,6 +1011,33 @@ where
     (left, pivot, right)
 }
 
+#[inline]
+/// Selects a pivot for the given index. First, puts a `N * N` random sample to the beginning
+/// of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements apart.
+/// Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is the
+/// index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
+/// equal.
+fn sample_and_choose<const N: usize, T, F>(
+    data: &mut [T],
+    index: usize,
+    is_less: &mut F,
+    rng: &mut WyRng,
+) -> (usize, bool)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    let len = data.len();
+    let sample = sample(data, N * N, rng);
+    let g = N * ((N * index) / len);
+    for j in 0..N {
+        let pos: [usize; N] = core::array::from_fn(|i| j + N * i);
+        sort_at(sample, pos, is_less);
+    }
+    let pos: [usize; N] = core::array::from_fn(|i| g + i);
+    sort_at(sample, pos, is_less);
+    (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
+}
+
 /// Selects the pivot element for partitioning the slice. Returns `(p, r)` where `p` is the index
 /// of the pivot element and `r` is number neighbor elements, used to test for equality.
 fn select_pivot<T, F>(
@@ -1015,7 +1045,7 @@ fn select_pivot<T, F>(
     index: usize,
     is_less: &mut F,
     rng: &mut WyRng,
-) -> (usize, usize)
+) -> (usize, bool)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -1025,84 +1055,32 @@ where
             let p = len / 2;
             median_at(data, [0, p, len - 1], is_less);
             sort_at(data, [p - 2, p - 1, p, p + 1, p + 2], is_less);
-            (p, 1)
+            (p, !is_less(&data[p - 1], &data[p + 1]))
         }
         // For slightly larger slices, use the median of 5 elements.
         len if len < 128 => {
             let p = len / 2;
             median_at(data, [0, p / 2, p, p + p / 2, len - 1], is_less);
             sort_at(data, [p - 2, p - 1, p, p + 1, p + 2], is_less);
-            (p, 1)
+            (p, !is_less(&data[p - 1], &data[p + 1]))
         }
         // For slices of size 128 to 1024, sort 5 groups of 5 elements each, then select the
         // group based on the index, sort the group and return the position of the middle element.
         len if len < 1024 => {
             let s = len / 5;
             let o = s / 2;
-            let p = s * ((5 * index) / len) + o;
-            // Each group is `s` elements apart.
+            let g = s * ((5 * index) / len) + o;
             for j in o..o + 5 {
                 sort_at(data, [j, s + j, 2 * s + j, 3 * s + j, 4 * s + j], is_less);
             }
-            // The pivot is the middle element of the group at position k.
-            sort_at(data, [p, p + 1, p + 2, p + 3, p + 4], is_less);
-            (p + 2, 2)
+            // The pivot is the middle element of the selected group
+            sort_at(data, [g, g + 1, g + 2, g + 3, g + 4], is_less);
+            (g + 2, !is_less(&data[g], &data[g + 4]))
         }
         // For larger slices, a similar technique is used, but with randomly sampled elements and
         // larger group sizes.
-        len if len < 4096 => {
-            let sample = sample(data, 25, rng);
-            let p = 5 * ((5 * index) / len);
-            for j in 0..5 {
-                sort_at(sample, [j, j + 5, j + 10, j + 15, j + 20], is_less);
-            }
-            sort_at(sample, [p, p + 1, p + 2, p + 3, p + 4], is_less);
-            (p + 2, 2)
-        }
-        len if len < 65536 => {
-            let sample = sample(data, 81, rng);
-            let p = 9 * ((9 * index) / len);
-            for j in 0..9 {
-                #[rustfmt::skip]
-                sort_at(
-                    sample,
-                    [j, j + 9, j + 18, j + 27, j + 36, j + 45, j + 54, j + 63, j + 72],
-                    is_less,
-                );
-            }
-            sort_at(
-                sample,
-                [p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8],
-                is_less,
-            );
-            (p + 4, 4)
-        }
-        len => {
-            let sample = sample(data, 441, rng);
-            let p = 21 * ((21 * index) / len);
-            for j in 0..21 {
-                #[rustfmt::skip]
-                sort_at(
-                    sample,
-                    [
-                        j, j + 21, j + 42, j + 63, j + 84, j + 105, j + 126, j + 147,
-                        j + 168, j + 189, j + 210, j + 231, j + 252, j + 273, j + 294,
-                        j + 315, j + 336, j + 357, j + 378, j + 399, j + 420,
-                    ],
-                    is_less,
-                );
-            }
-            #[rustfmt::skip]
-            sort_at(
-                sample,
-                [
-                    p, p + 1, p + 2, p + 3, p + 4, p + 5, p + 6, p + 7, p + 8, p + 9,
-                    p + 10, p + 11, p + 12, p + 13, p + 14, p + 15, p + 16, p + 17,
-                    p + 18, p + 19, p + 20,
-                ],
-                is_less,
-            );
-            (p + 10, 10)
-        }
+        len if len < 4096 => sample_and_choose::<5, _, _>(data, index, is_less, rng),
+        len if len < 65536 => sample_and_choose::<9, _, _>(data, index, is_less, rng),
+        _ => sample_and_choose::<21, _, _>(data, index, is_less, rng),
     }
 }
