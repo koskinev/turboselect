@@ -884,14 +884,14 @@ where
             _ => {
                 let (p, all_eq) = select_pivot(data, index, is_less, rng);
                 match was {
+                    // Test if the selected pivot is equal to a previous pivot from the left. In
+                    // this case we know that the pivot is the minimum of the current slice.
+                    Some(w) if !is_less(w, &data[p]) => partition_min(data, p, is_less),
+
                     // If the selected pivot is equal to it's neighbor elements, use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
                     _ if all_eq => partition_at_index_eq(data, p, is_less),
-
-                    // Test if the selected pivot is equal to a previous pivot from the left. In
-                    // this case we know that the pivot is the minimum of the current slice.
-                    Some(w) if !is_less(w, &data[p]) => partition_min(data, p, is_less),
 
                     // Otherwise, use the default binary partioning.
                     _ => partition_at_index(data, p, is_less),
