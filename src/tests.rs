@@ -325,110 +325,66 @@ fn max_10() {
     assert_eq!(v, 9);
 }
 
-#[test]
-fn sort2() {
-    let mut data = [1, 0];
-    sort_at(data.as_mut_slice(), [0, 1], &mut i32::lt);
-    assert_eq!(data, [0, 1]);
-}
-
-#[test]
-fn sort3() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let count = 3;
-    let mut rng = WyRng::new(0);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_at(&mut data, [0, 1, 2], &mut usize::lt);
-        assert!(data[0] <= data[1]);
-        assert!(data[1] <= data[2]);
-    }
-}
-
-#[test]
-fn sort4() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let count = 4;
-    let mut rng = WyRng::new(0);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        sort_at(&mut data, [0, 1, 2, 3], &mut usize::lt);
-        assert!(data[0] <= data[1]);
-        assert!(data[1] <= data[2]);
-        assert!(data[2] <= data[3]);
-    }
-}
-
-#[test]
-fn sort9() {
+fn test_sort<const N: usize>() {
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
     let repeat = 1;
 
     let mut rng = WyRng::new(0);
-
+    let pos: [usize; N] = core::array::from_fn(|i| i);
     for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, 9, 9).collect();
-        sort_at(
-            &mut data,
-            core::array::from_fn::<_, 9, _>(|i| i),
-            &mut usize::lt,
-        );
-        for i in 1..9 {
+        let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
+        sort_at(&mut data, pos, &mut usize::lt);
+        for i in 1..N {
             assert!(data[i - 1] <= data[i]);
         }
     }
 }
 
-#[test]
-fn sort21() {
+fn test_median<const N: usize>() {
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
     let repeat = 1;
 
     let mut rng = WyRng::new(0);
-
+    let pos: [usize; N] = core::array::from_fn(|i| i);
     for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, 21, 21).collect();
-        sort_at(
-            &mut data,
-            core::array::from_fn::<_, 21, _>(|i| i),
-            &mut usize::lt,
-        );
-        for i in 1..21 {
-            assert!(data[i - 1] <= data[i]);
+        let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
+        median_at(&mut data, pos, &mut usize::lt);
+        let median = data[N / 2];
+        for &elem in data[0..N / 2].iter() {
+            assert!(elem <= median);
+        }
+        for &elem in data[N / 2..].iter() {
+            assert!(elem >= median);
         }
     }
 }
 
+
 #[test]
-fn median5() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
+fn sorts() {
+    test_sort::<2>();
+    test_sort::<3>();
+    test_sort::<4>();
+    test_sort::<5>();
+    test_sort::<6>();
+    test_sort::<7>();
+    test_sort::<8>();
+    test_sort::<9>();
+    test_sort::<15>();
+    test_sort::<21>();
+}
 
-    let count = 5;
-    let mut rng = WyRng::new(0);
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-        median_at(&mut data, [0, 1, 2, 3, 4], &mut usize::lt);
-        assert!(data[0] <= data[2]);
-        assert!(data[1] <= data[2]);
-        assert!(data[2] <= data[3]);
-        assert!(data[2] <= data[4]);
-    }
+#[test]
+fn medians() {
+    test_median::<2>();
+    test_median::<3>();
+    test_median::<4>();
+    test_median::<5>();
+    test_median::<6>();
+    test_median::<9>();
+    test_median::<21>();
 }
