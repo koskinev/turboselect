@@ -7,41 +7,52 @@ mod wyrand;
 
 use core::{
     mem::{ManuallyDrop, MaybeUninit},
+    ops::{Deref, DerefMut, Range},
     ptr,
 };
 use sort::{median_at, sort_at};
 use wyrand::WyRng;
 
-// Represents a hole in a slice. When dropped, copies from `src` into `dest`.
-struct Hole<T> {
-    src: *const T,
-    dest: *mut T,
+
+/// Represents an element removed from a slice. When dropped, copies the value into `dst`.
+struct Elem<T> {
+    value: ManuallyDrop<T>,
+    dst: *mut T,
 }
 
-impl<T> Drop for Hole<T> {
+impl<T> Deref for Elem<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T> DerefMut for Elem<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+
+impl<T> Drop for Elem<T> {
     fn drop(&mut self) {
         // SAFETY: This is a helper class. Please refer to its usage for correctness. Namely, one
         // must be sure that `src` and `dst` does not overlap as required by
         // `ptr::copy_nonoverlapping` and are both valid for writes.
         unsafe {
-            ptr::copy_nonoverlapping(self.src, self.dest, 1);
+            let value = ManuallyDrop::take(&mut self.value);
+            ptr::write(self.dst, value)
         }
     }
 }
 
-// Similar to `Hole`, but allows for mutable access to the source.
-struct HoleMut<T> {
-    src: *mut T,
-    dest: *mut T,
-}
-
-impl<T> Drop for HoleMut<T> {
-    fn drop(&mut self) {
-        // SAFETY: This is a helper class. Please refer to its usage for correctness. Namely, one
-        // must be sure that `src` and `dst` does not overlap as required by
-        // `ptr::copy_nonoverlapping` and are both valid for writes.
-        unsafe {
-            ptr::copy_nonoverlapping(self.src, self.dest, 1);
+impl<T> Elem<T> {
+    /// Creates a new `Elem` from a mutable reference. This method can be safely used only if the
+    /// caller ensures that the reference is not used for the duration of the `Elem`'s lifetime.
+    unsafe fn new(src: &mut T) -> Self {
+        Self {
+            value: ManuallyDrop::new(ptr::read(src)),
+            dst: src,
         }
     }
 }
@@ -60,7 +71,7 @@ impl<T> Drop for HoleMut<T> {
 /// ```
 ///
 /// Panics if `index` is out of bounds.
-fn partition_at_index<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
+fn partition_at<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -71,26 +82,21 @@ where
     let u = {
         // Read the pivot into the stack. The read below is safe, because the pivot is the first
         // element in the slice.
-        let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
-        let _pivot_guard = Hole {
-            src: &*tmp,
-            dest: head,
-        };
-        let pivot = &*tmp;
+        let pivot = unsafe { Elem::new(head) };
 
         // Find the positions of the first pair of out-of-order elements.
         let (mut l, mut r) = (0, tail.len());
         unsafe {
             // The calls to get_unchecked are safe, because the slice is non-empty and we ensure l
             // <= r.
-            while l < r && is_less(tail.get_unchecked(l), pivot) {
+            while l < r && is_less(tail.get_unchecked(l), &*pivot) {
                 l += 1;
             }
-            while l < r && !is_less(tail.get_unchecked(r - 1), pivot) {
+            while l < r && !is_less(tail.get_unchecked(r - 1), &*pivot) {
                 r -= 1;
             }
         }
-        l + partition_in_blocks(&mut tail[l..r], pivot, is_less)
+        l + partition_in_blocks(&mut tail[l..r], &*pivot, is_less)
     };
     data.swap(0, u);
     (u, u)
@@ -111,7 +117,7 @@ where
 /// ```
 ///
 /// Panics if `index` is out of bounds.
-fn partition_at_index_eq<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
+fn partition_equal<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -119,31 +125,25 @@ where
     let (head, tail) = data.split_first_mut().unwrap();
 
     let (u, v) = {
-        // Read the pivot into the stack. The read below is safe, because the pivot is the first
-        // element in the slice.
-        let tmp = unsafe { ManuallyDrop::new(ptr::read(head)) };
-        let _pivot_guard = Hole {
-            src: &*tmp,
-            dest: head,
-        };
-        let pivot = &*tmp;
-
-        partition_in_blocks_dual(tail, pivot, pivot, is_less)
+        // Read the pivot into the stack.
+        // SAFETY: `head` is not accessed again before the end of this block.
+        let pivot = unsafe { Elem::new(head) };
+        partition_in_blocks_dual(tail, &*pivot, &*pivot, is_less)
     };
     data.swap(0, u);
     (u, v)
 }
 
-/// Partitions `v` into elements smaller than `pivot`, followed by elements greater than or equal
-/// to `pivot`.
+/// Partitions `data` into elements smaller than `pivot`, followed by elements greater than or equal
+/// to `pivot`. Returns the number of elements smaller than `pivot`.
 ///
-/// Returns the number of elements smaller than `pivot`.
+/// This function is a slightly modified version of `core::slice::sort::partition_in_blocks`.
 ///
 /// Partitioning is performed block-by-block in order to minimize the cost of branching operations.
 /// This idea is presented in the [BlockQuicksort][pdf] paper.
 ///
 /// [pdf]: https://drops.dagstuhl.de/opus/volltexte/2016/6389/pdf/LIPIcs-ESA-2016-38.pdf
-fn partition_in_blocks<T, F>(v: &mut [T], pivot: &T, is_less: &mut F) -> usize
+fn partition_in_blocks<T, F>(data: &mut [T], pivot: &T, is_less: &mut F) -> usize
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -163,8 +163,12 @@ where
     // 3. `end` - End pointer into the `offsets` array.
     // 4. `offsets` - Indices of out-of-order elements within the block.
 
+    let Range {
+        start: mut l,
+        end: mut r,
+    } = data.as_mut_ptr_range();
+
     // The current block on the left side (from `l` to `l.add(block_l)`).
-    let mut l = v.as_mut_ptr();
     let mut block_l = BLOCK;
     let mut start_l = ptr::null_mut();
     let mut end_l = ptr::null_mut();
@@ -399,7 +403,7 @@ where
                 r = r.sub(1);
             }
         }
-        width(v.as_mut_ptr(), r)
+        width(data.as_mut_ptr(), r)
     } else if start_r < end_r {
         // The right block remains.
         // Move its remaining out-of-order elements to the far left.
@@ -412,15 +416,15 @@ where
                 l = l.add(1);
             }
         }
-        width(v.as_mut_ptr(), l)
+        width(data.as_mut_ptr(), l)
     } else {
         // Nothing else to do, we're done.
-        width(v.as_mut_ptr(), l)
+        width(data.as_mut_ptr(), l)
     }
 }
 
-/// Partitions `v` into elements smaller than `low`, followed by elements between `low` and `high`
-/// and then elements greater than `high`.
+/// Partitions `data` into elements smaller than `low`, followed by elements between `low` and
+/// `high` and then elements greater than `high`.
 ///
 /// Returns a tuple `(u, v)` where `u` is the number of elements smaller than `low` and `v` is the
 /// number of elements smaller than or equal to `high`.
@@ -435,8 +439,7 @@ where
 {
     // Number of elements in a typical block.
     const BLOCK: usize = 128;
-    let s = data.as_mut_ptr();
-    let e = unsafe { s.add(data.len()) };
+    let Range { start: s, end: e } = data.as_mut_ptr_range();
 
     // The partitioning algorithm repeats the following steps until completion:
     //
@@ -776,6 +779,21 @@ where
     (u, v)
 }
 
+/// Puts the maximum elements at the end of the slice and returns the indices of the first and
+/// last elements equal to the maximum. The `init` argument is the index of the element to use as
+/// the initial maximum.
+fn partition_max<T, F>(data: &mut [T], init: usize, is_less: &mut F) -> (usize, usize)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    let (_, v) = partition_min(data, init, &mut |x, y| is_less(y, x));
+    let len = data.len();
+    let count = (v + 1).min(len - v - 1);
+    let (head, tail) = data.split_at_mut(len - count);
+    unsafe { ptr::swap_nonoverlapping(tail.as_mut_ptr(), head.as_mut_ptr(), count) };
+    (len - v - 1, len - 1)
+}
+
 /// Puts the minimum elements at the beginning of the slice and returns the indices of the first and
 /// last elements equal to the minimum. The `init` argument is the index of the element to use as
 /// the initial minimum.
@@ -783,17 +801,9 @@ fn partition_min<T, F>(data: &mut [T], init: usize, is_less: &mut F) -> (usize, 
 where
     F: FnMut(&T, &T) -> bool,
 {
-    assert!(!data.is_empty());
-
-    // Number of elements in a typical block.
-    const BLOCK: usize = 64;
-
-    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
-    fn width<T>(l: *mut T, r: *mut T) -> usize {
-        assert!(core::mem::size_of::<T>() > 0);
-        // FIXME: this should *likely* use `offset_from`, but more
-        // investigation is needed (including running tests in miri).
-        unsafe { r.offset_from(l) as usize }
+    // If there is only one element, it is the minimum.
+    if data.len() < 2 {
+        return (0, data.len() - 1);
     }
 
     // Initialize the minimum by scanning some elements.
@@ -802,21 +812,27 @@ where
     sort_at(data, [0, data.len() / 2], is_less);
     sort_at(data, [0, data.len() / 3], is_less);
 
-    // The index of the last element that is equal to the minimum element.
-    let l = data.as_mut_ptr();
-    let r = unsafe { l.add(data.len()) };
-    let mut elem = unsafe { l.add(1) };
-    let mut tmp = unsafe { ManuallyDrop::new(ptr::read(l)) };
-    let guard = HoleMut {
-        src: &mut *tmp,
-        dest: l,
-    };
-    let min = guard.src;
+    // Copy the initial minimum to the stack
+    let (head, tail) = data.split_first_mut().unwrap();
+    let mut min = unsafe { Elem::new(head) };
+    let mut dups = 0;
 
+    let Range { start: l, end: r } = tail.as_mut_ptr_range();
+    let mut elem = l;
+
+    // Setup the offsets array.
+    const BLOCK: usize = 64;
     let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
     let mut start = offsets.as_mut_ptr().cast();
     let mut end: *mut u8 = start;
-    let mut dups = 0;
+
+    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
+    fn width<T>(l: *mut T, r: *mut T) -> usize {
+        assert!(core::mem::size_of::<T>() > 0);
+        // FIXME: this should *likely* use `offset_from`, but more
+        // investigation is needed (including running tests in miri).
+        unsafe { r.offset_from(l) as usize }
+    }
 
     while elem < r {
         // Scan the next block.
@@ -834,13 +850,13 @@ where
                 if is_less(&*elem.add(offset), &*min) {
                     // We found a new minimum.
                     dups = 0;
-                    ptr::swap_nonoverlapping(elem.add(offset), min, 1);
+                    ptr::swap_nonoverlapping(elem.add(offset), &mut *min, 1);
                 } else if !is_less(&*min, &*elem.add(offset)) {
                     // We found an element equal to the minimum.
-                    dups += 1;
                     if dups < elem.add(offset).offset_from(l) as usize {
                         ptr::swap_nonoverlapping(elem.add(offset), l.add(dups), 1);
                     }
+                    dups += 1;
                 }
                 start = start.add(1);
             }
@@ -871,11 +887,17 @@ where
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
 /// Panics if `index >= data.len()`.
-fn quickselect<T, F>(mut data: &mut [T], mut index: usize, is_less: &mut F, rng: &mut WyRng)
+fn quickselect<T, F>(
+    mut data: &mut [T],
+    mut index: usize,
+    is_less: &mut F,
+    rng: &mut WyRng,
+) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
     assert!(index < data.len());
+    let mut offset = 0;
     let mut was = None;
     while data.len() > 6 {
         let (u, v) = match index {
@@ -891,10 +913,10 @@ where
                     // If the selected pivot is equal to it's neighbor elements, use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
-                    _ if all_eq => partition_at_index_eq(data, p, is_less),
+                    _ if all_eq => partition_equal(data, p, is_less),
 
                     // Otherwise, use the default binary partioning.
-                    _ => partition_at_index(data, p, is_less),
+                    _ => partition_at(data, p, is_less),
                 }
             }
         };
@@ -903,18 +925,19 @@ where
         if index < u {
             // Select the left part. We don't store the pivot, since all elements on the left are
             // smaller than the pivot.
-            let (head, _tail) = data.split_at_mut(u);
-            data = head;
+            data = data[..u].as_mut();
         } else if index > v {
             // Select the right part. Elements on the right can be equal to the pivot,
             // so we store it.
-            index -= v + 1;
             let (head, tail) = data.split_at_mut(v + 1);
             (data, was) = (tail, head.last());
+            index -= v + 1;
+            offset += v + 1;
         } else {
-            return;
+            return (offset + u, offset + v);
         }
     }
+    let u = index + offset;
     match data.len() {
         6 => sort_at(data, [0, 1, 2, 3, 4, 5], is_less),
         5 => sort_at(data, [0, 1, 2, 3, 4], is_less),
@@ -923,6 +946,7 @@ where
         2 => sort_at(data, [0, 1], is_less),
         _ => (),
     }
+    (u, u)
 }
 
 /// Samples `count` elements randomly and places them into the beginning of the slice. Returns the
