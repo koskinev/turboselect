@@ -15,7 +15,7 @@ use wyrand::WyRng;
 
 const ALPHA: f64 = 0.25;
 const BETA: f64 = 0.15;
-const MIN_LEN: usize = 250_000;
+const MIN_LEN: usize = 250000;
 const MAX_DEPTH: usize = 4;
 
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
@@ -149,8 +149,8 @@ where
         partition_in_blocks_dual(middle, &*low, &*high, is_less)
     };
     data.swap(0, u);
-    data.swap(v, data.len() - 1);
-    (u, v)
+    data.swap(v + 1, data.len() - 1);
+    (u, v + 1)
 }
 
 /// Partitions `data` into three parts using the element at `index` as the pivot.
@@ -934,26 +934,23 @@ where
     let (count, p, q) = sample_parameters(index, len);
     let sample = sample(data, count, rng);
 
-    // Find the pivots
-    let qu = turboselect(sample, q, depth + 1, is_less, rng).0;
-    let u = match qu {
-        qu if p < qu => turboselect(&mut sample[..qu], p, depth + 1, is_less, rng).0,
-        _ => qu,
-    };
-    let v = len + qu - count;
+    let h = turboselect(sample, q, depth + 1, is_less, rng).0;
+    if p < h {
+        let l = turboselect(&mut sample[..h], p, depth + 1, is_less, rng).1;
 
-    // Move sample elements >= high  to the end of the slice
-    let (_, tail) = data.split_at_mut(qu);
-    let (left, tail) = tail.split_at_mut(count - qu);
-    let (_, right) = tail.split_at_mut(tail.len() - left.len());
-    left.swap_with_slice(right);
+        // Move sample elements >= high  to the end of the slice
+        let v = len + h - count;
+        let (_, tail) = data.split_at_mut(h);
+        let (left, tail) = tail.split_at_mut(count - h);
+        let (_, right) = tail.split_at_mut(tail.len() - left.len());
+        left.swap_with_slice(right);
 
-    // Partition the slice
-    let (du, dv) = match (u, v) {
-        (u, v) if u == v => partition_at(data[u..=v].as_mut(), 0, is_less),
-        (u, v) => partition_between(data[u..=v].as_mut(), (0, v - u), is_less),
-    };
-    (u + du, u + dv)
+        // Partition the slice between the already partitioned sample elements
+        let (du, dv) = partition_between(data[l..=v].as_mut(), (0, v - l), is_less);
+        (l + du, l + dv)
+    } else {
+        partition_at(data, h, is_less)
+    }
 }
 
 /// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
@@ -1219,13 +1216,18 @@ fn turboselect<T, F>(
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let (mut offset, mut _delta) = (0, usize::MAX);
+    if data.len() < MIN_LEN || depth > MAX_DEPTH {
+        return quickselect(data, index, is_less, rng);
+    }
+
+    let (mut offset, mut delta) = (0, usize::MAX);
     loop {
         let len = data.len();
+        let cut = len < MIN_LEN || depth > MAX_DEPTH || delta < len / 10;
         let (u, v) = match index {
             0 => partition_min(data, 0, is_less),
             i if i == len - 1 => partition_max(data, 0, is_less),
-            _ if len < MIN_LEN || depth > MAX_DEPTH => quickselect(data, index, is_less, rng),
+            _ if cut => quickselect(data, index, is_less, rng),
             _ => recurse_select(data, index, depth + 1, is_less, rng),
         };
         // Test if the pivot is at its sorted position and if not, recurse on the appropriate
@@ -1233,16 +1235,16 @@ where
         if index < u {
             data = data[..u].as_mut();
         } else if index > v {
-            data = data[v + 1..].as_mut();
-            offset += v + 1;
-            index -= v + 1;
+            data = data[v..].as_mut();
+            offset += v;
+            index -= v;
         } else if is_less(&data[u], &data[v]) {
-            data = data[u..=v].as_mut();
+            data = data[u..v].as_mut();
             index -= u;
             offset += u;
         } else {
             return (u + offset, v + offset);
         }
-        _delta = len - data.len();
+        delta = len - data.len();
     }
 }
