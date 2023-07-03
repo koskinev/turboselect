@@ -129,8 +129,14 @@ fn reversed() {
         let index = (iter * count) / repeat;
         let mut data = reversed_u32s(count, rng.as_mut());
         let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
-        assert!(left.iter().all(|elem| elem <= nth));
-        assert!(right.iter().all(|elem| elem >= nth));
+        left.iter().enumerate().for_each(|(i, elem)| match i {
+            i if elem > nth => panic!("iter {iter}: left[{i}] = {elem} > nth = {nth}"),
+            _ => (),
+        });
+        right.iter().enumerate().for_each(|(i, elem)| match i {
+            i if elem < nth => panic!("iter {iter}: left[{i}] = {elem} < nth = {nth}"),
+            _ => (),
+        });
     }
 }
 #[test]
@@ -151,8 +157,6 @@ fn bool_median() {
 
     for _iter in 0..repeat {
         let mut data: Vec<_> = (0..count).map(|_| rng.bool()).collect();
-        // let mut cloned = data.clone();
-        // let (left, nth, right) = cloned.select_nth_unstable(index);
         let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
         assert!(left.iter().all(|elem| elem <= nth));
         assert!(right.iter().all(|elem| elem >= nth));
