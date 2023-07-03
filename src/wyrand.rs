@@ -132,8 +132,13 @@ impl WyRng {
     /// program.
     pub fn new(mut seed: u64) -> Self {
         let mut rng = Self { state: 0 };
+        #[cfg(not(debug_assertions))]
         if seed == 0 {
             seed = &rng as *const Self as u64;
+        }
+        #[cfg(debug_assertions)]
+        if seed == 0 {
+            seed = 123456789123456789;
         }
         rng.state = rng.state.wrapping_add(seed);
         rng
