@@ -1117,11 +1117,16 @@ pub fn select_nth_unstable<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T
 where
     T: Ord,
 {
+    #[cfg(not(debug_assertions))]
     // Use the address of the last element as the seed for the random number generator.
     let seed = data.as_mut_ptr() as u64 + data.len() as u64;
+
+    #[cfg(debug_assertions)]
+    let seed = 12345678901234567890;
+
     let mut rng = WyRng::new(seed);
 
-    turboselect(data, index, 0, &mut T::lt, rng.as_mut());
+    quickselect(data, index, &mut T::lt, rng.as_mut());
 
     let (left, rest) = data.split_at_mut(index);
     let (pivot, right) = rest.split_first_mut().unwrap();
