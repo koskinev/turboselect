@@ -56,6 +56,47 @@ impl<T> Elem<T> {
     }
 }
 
+fn miniselect<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    let mut l = data.as_mut_ptr();
+    let (mut r, k) = unsafe { (l.add(data.len() - 1), l.add(index)) };
+    while l < r {
+        let mut p = l;
+        let mut q = r;
+        unsafe {
+            let x = ManuallyDrop::new(ptr::read(k));
+            loop {
+                while is_less(&*p, &x) {
+                    p = p.add(1);
+                }
+                while is_less(&x, &*q) {
+                    q = q.sub(1);
+                }
+                if p <= q {
+                    let tmp = ManuallyDrop::new(ptr::read(p));
+                    p.copy_from(q, 1);
+                    q.write(ManuallyDrop::into_inner(tmp));
+                    p = p.add(1);
+                    q = q.sub(1);
+                }
+                if p > q {
+                    break;
+                }
+            }
+        }
+        if q < k {
+            l = p;
+        }
+        if k < p {
+            r = q;
+        }
+    }
+    (index, index)
+}
+
+
 /// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
 /// where `u` is the number of elements less than the pivot, and the index of the pivot after
 /// partitioning.
@@ -883,7 +924,7 @@ where
     assert!(index < data.len());
     let mut offset = 0;
     let mut was = None;
-    while data.len() > 6 {
+    while data.len() > 16 {
         let (u, v) = match index {
             0 => partition_min(data, 0, is_less),
             i if i == data.len() - 1 => partition_max(data, 0, is_less),
@@ -921,15 +962,8 @@ where
             return (offset + u, offset + v);
         }
     }
+    miniselect(data, index, is_less);
     let u = index + offset;
-    match data.len() {
-        6 => sort_at(data, [0, 1, 2, 3, 4, 5], is_less),
-        5 => sort_at(data, [0, 1, 2, 3, 4], is_less),
-        4 => sort_at(data, [0, 1, 2, 3], is_less),
-        3 => sort_at(data, [0, 1, 2], is_less),
-        2 => sort_at(data, [0, 1], is_less),
-        _ => (),
-    }
     (u, u)
 }
 
@@ -1098,6 +1132,6 @@ where
         // larger group sizes.
         len if len < 4096 => sample_and_choose::<5, _, _>(data, index, is_less, rng),
         len if len < 65536 => sample_and_choose::<9, _, _>(data, index, is_less, rng),
-        _ => sample_and_choose::<63, _, _>(data, index, is_less, rng),
+        _ => sample_and_choose::<21, _, _>(data, index, is_less, rng),
     }
 }

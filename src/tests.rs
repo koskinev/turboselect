@@ -2,7 +2,7 @@ use crate::{
     partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
     select_nth_unstable,
     sort::{median_at, sort_at},
-    wyrand::WyRng,
+    wyrand::WyRng, miniselect,
 };
 
 fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -244,6 +244,30 @@ fn nth_small() {
 }
 
 #[test]
+fn nth_mini() {
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
+    let max = 100;
+    let mut rng = WyRng::new(123);
+
+    for _iter in 0..repeat {
+        let count = rng.bounded_usize(1, max);
+        let high = rng.bounded_usize(0, count);
+
+        let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
+        let index = rng.bounded_usize(0, count);
+        miniselect(&mut data, index, &mut usize::lt);
+        let nth = data[index];
+        assert!(data[..index].iter().all(|elem| elem <= &nth));
+        assert!(data[index..].iter().all(|elem| elem >= &nth));
+    }
+}
+
+
+#[test]
 fn sample_n() {
     #[cfg(not(miri))]
     let repeat = 1000;
@@ -380,6 +404,7 @@ fn sorts() {
     test_sort::<9>();
     test_sort::<15>();
     test_sort::<21>();
+    test_sort::<63>();
 }
 
 #[test]
