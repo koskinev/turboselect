@@ -13,11 +13,6 @@ use core::{
 use sort::{median_at, sort_at};
 use wyrand::WyRng;
 
-const ALPHA: f64 = 0.25;
-const BETA: f64 = 0.15;
-const MIN_LEN: usize = 250000;
-const MAX_DEPTH: usize = 4;
-
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
 struct Elem<T> {
     value: ManuallyDrop<T>,
@@ -104,53 +99,6 @@ where
     };
     data.swap(0, u);
     (u, u)
-}
-
-/// Partitions `data` into three parts using the elements at the positions provided by `indices`
-/// as the lower and upper pivots.
-///
-/// Returns `(u, v)`, where `u` is the number of elements less than the lower pivot, and `v` is the
-/// number of elements less than or equal to the upper pivot. After the call, the lower pivot is at
-/// `u`, and the upper pivot is at `v`.
-///
-/// The resulting partitioning is:
-///
-/// ```text
-/// ┌─────────────────────────────┬─────────────────────────────────┬─────────────────────────────┐
-/// │ is_less(&data[x], &data[u]) │    !is_less(&data[x], &data[u]) │ is_less(&data[v], &data[x]) │
-/// │                             │ && !is_less(&data[v], &data[x]) │                             │
-/// └─────────────────────────────┴─────────────────────────────────┴─────────────────────────────┘
-///                                u                               v
-/// ```
-///
-/// Panics if either index is out of bounds or if the indices are equal.
-fn partition_between<T, F>(
-    data: &mut [T],
-    indices: (usize, usize),
-    is_less: &mut F,
-) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let (a, b) = indices;
-    assert_ne!(a, b);
-
-    sort_at(data, [a, b], is_less);
-    data.swap(0, a);
-    data.swap(b, data.len() - 1);
-    let (head, tail) = data.split_first_mut().unwrap();
-    let (tail, middle) = tail.split_last_mut().unwrap();
-
-    let (u, v) = {
-        // Read the pivot into the stack.
-        // SAFETY: `head` is not accessed again before the end of this block.
-        let low = unsafe { Elem::new(head) };
-        let high = unsafe { Elem::new(tail) };
-        partition_in_blocks_dual(middle, &*low, &*high, is_less)
-    };
-    data.swap(0, u);
-    data.swap(v + 1, data.len() - 1);
-    (u, v + 1)
 }
 
 /// Partitions `data` into three parts using the element at `index` as the pivot.
@@ -919,40 +867,6 @@ where
     (0, dups)
 }
 
-fn recurse_select<T, F>(
-    data: &mut [T],
-    index: usize,
-    depth: usize,
-    is_less: &mut F,
-    rng: &mut WyRng,
-) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    // Take a random sample for pivot selection
-    let len = data.len();
-    let (count, p, q) = sample_parameters(index, len);
-    let sample = sample(data, count, rng);
-
-    let h = turboselect(sample, q, depth + 1, is_less, rng).0;
-    if p < h {
-        let l = turboselect(&mut sample[..h], p, depth + 1, is_less, rng).1;
-
-        // Move sample elements >= high  to the end of the slice
-        let v = len + h - count;
-        let (_, tail) = data.split_at_mut(h);
-        let (left, tail) = tail.split_at_mut(count - h);
-        let (_, right) = tail.split_at_mut(tail.len() - left.len());
-        left.swap_with_slice(right);
-
-        // Partition the slice between the already partitioned sample elements
-        let (du, dv) = partition_between(data[l..=v].as_mut(), (0, v - l), is_less);
-        (l + du, l + dv)
-    } else {
-        partition_at(data, h, is_less)
-    }
-}
-
 /// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
@@ -1051,22 +965,6 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
         src.write(ManuallyDrop::into_inner(tmp));
         &mut data[..count]
     }
-}
-
-/// For the given index and slice length, determines the sample size and the positions of the pivots
-/// in the sample with a high probability that the `index`th element is between the two pivots.
-///
-/// Returns `(size, p, q)`, where `size` is the sample size  and `p` and `q` are the pivot positions
-/// in the sample.
-fn sample_parameters(index: usize, n: usize) -> (usize, usize, usize) {
-    let index = index as f64;
-    let n = n as f64;
-    let f = n.powf(2. / 3.) * n.ln().powf(1. / 3.);
-    let size = (ALPHA * f).ceil().min(n - 1.);
-    let gap = (BETA * size * n.ln()).powf(0.5);
-    let p = (index * size / n - gap).ceil().max(0.) as usize;
-    let q = (index * size / n + gap).ceil().min(size - 1.) as usize;
-    (size as usize, p, q)
 }
 
 /// Reorder the slice such that the element at `index` is at its final sorted position.
@@ -1200,51 +1098,6 @@ where
         // larger group sizes.
         len if len < 4096 => sample_and_choose::<5, _, _>(data, index, is_less, rng),
         len if len < 65536 => sample_and_choose::<9, _, _>(data, index, is_less, rng),
-        _ => sample_and_choose::<21, _, _>(data, index, is_less, rng),
-    }
-}
-
-/// Reorders the slice so that the element at `index` is at its sorted position. Returns the
-/// indices of the first and last elements equal to the element at `index`.
-fn turboselect<T, F>(
-    mut data: &mut [T],
-    mut index: usize,
-    depth: usize,
-    is_less: &mut F,
-    rng: &mut WyRng,
-) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    if data.len() < MIN_LEN || depth > MAX_DEPTH {
-        return quickselect(data, index, is_less, rng);
-    }
-
-    let (mut offset, mut delta) = (0, usize::MAX);
-    loop {
-        let len = data.len();
-        let cut = len < MIN_LEN || depth > MAX_DEPTH || delta < len / 10;
-        let (u, v) = match index {
-            0 => partition_min(data, 0, is_less),
-            i if i == len - 1 => partition_max(data, 0, is_less),
-            _ if cut => quickselect(data, index, is_less, rng),
-            _ => recurse_select(data, index, depth + 1, is_less, rng),
-        };
-        // Test if the pivot is at its sorted position and if not, recurse on the appropriate
-        // partition
-        if index < u {
-            data = data[..u].as_mut();
-        } else if index > v {
-            data = data[v..].as_mut();
-            offset += v;
-            index -= v;
-        } else if is_less(&data[u], &data[v]) {
-            data = data[u..v].as_mut();
-            index -= u;
-            offset += u;
-        } else {
-            return (u + offset, v + offset);
-        }
-        delta = len - data.len();
+        _ => sample_and_choose::<63, _, _>(data, index, is_less, rng),
     }
 }
