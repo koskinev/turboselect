@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod benches;
+mod heapselect;
 mod sort;
 #[cfg(test)]
 mod tests;
@@ -48,7 +49,7 @@ impl<T> Drop for Elem<T> {
 impl<T> Elem<T> {
     /// Creates a new `Elem` from a mutable reference. This method can be safely used only if the
     /// caller ensures that the reference is not used for the duration of the `Elem`'s lifetime.
-    unsafe fn new(src: &mut T) -> Self {
+    unsafe fn new(src: *mut T) -> Self {
         Self {
             value: ManuallyDrop::new(ptr::read(src)),
             dst: src,
@@ -56,6 +57,7 @@ impl<T> Elem<T> {
     }
 }
 
+/// 
 fn miniselect<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
@@ -95,7 +97,6 @@ where
     }
     (index, index)
 }
-
 
 /// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
 /// where `u` is the number of elements less than the pivot, and the index of the pivot after
@@ -924,7 +925,7 @@ where
     assert!(index < data.len());
     let mut offset = 0;
     let mut was = None;
-    while data.len() > 16 {
+    while data.len() > 12 {
         let (u, v) = match index {
             0 => partition_min(data, 0, is_less),
             i if i == data.len() - 1 => partition_max(data, 0, is_less),

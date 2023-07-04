@@ -2,7 +2,7 @@ use crate::{
     partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
     select_nth_unstable,
     sort::{median_at, sort_at},
-    wyrand::WyRng, miniselect,
+    wyrand::WyRng, miniselect, heapselect::{heapselect},
 };
 
 fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -259,13 +259,35 @@ fn nth_mini() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        miniselect(&mut data, index, &mut usize::lt);
+        miniselect(data.as_mut_slice(), index, &mut usize::lt);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
     }
 }
 
+#[test]
+fn nth_heap() {
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
+    let max = 100;
+    let mut rng = WyRng::new(123);
+
+    for _iter in 0..repeat {
+        let count = rng.bounded_usize(1, max);
+        let high = rng.bounded_usize(0, count);
+
+        let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
+        let index = rng.bounded_usize(0, count);
+        heapselect(data.as_mut_slice(), index, &mut usize::lt);
+        let nth = data[index];
+        assert!(data[..index].iter().all(|elem| elem <= &nth));
+        assert!(data[index..].iter().all(|elem| elem >= &nth));
+    }
+}
 
 #[test]
 fn sample_n() {
