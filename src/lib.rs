@@ -1081,10 +1081,10 @@ where
     let sample = sample(data, N * N, rng);
     let g = N * ((N * index) / len);
     for j in 0..N {
-        let pos: [usize; N] = core::array::from_fn(|i| j + N * i);
+        let pos: [_; N] = core::array::from_fn(|i| j + N * i);
         sort_at(sample, pos, is_less);
     }
-    let pos: [usize; N] = core::array::from_fn(|i| g + i);
+    let pos: [_; N] = core::array::from_fn(|i| g + i);
     sort_at(sample, pos, is_less);
     (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
 }
@@ -1104,26 +1104,26 @@ where
         // If the slice is small, use median of three.
         len if len < 32 => {
             let p = len / 2;
-            median_at(data, [0, p, len - 1], is_less);
-            sort_at(data, [p - 2, p - 1, p, p + 1, p + 2], is_less);
-            (p, !is_less(&data[p - 1], &data[p + 1]))
+            sort_at(data, [0, p, len - 1], is_less);
+            (p, !is_less(&data[0], &data[len - 1]))
         }
         // For slightly larger slices, use the median of 5 elements.
         len if len < 128 => {
             let p = len / 2;
             median_at(data, [0, p / 2, p, p + p / 2, len - 1], is_less);
-            sort_at(data, [p - 2, p - 1, p, p + 1, p + 2], is_less);
             (p, !is_less(&data[p - 1], &data[p + 1]))
         }
         // For slices of size 128 to 1024, sort 5 groups of 5 elements each, then select the
         // group based on the index, sort the group and return the position of the middle element.
         len if len < 1024 => {
             let s = len / 5;
-            let o = s / 2;
-            let g = s * ((5 * index) / len) + o;
-            for j in o..o + 5 {
-                sort_at(data, [j, s + j, 2 * s + j, 3 * s + j, 4 * s + j], is_less);
-            }
+            let g = s * ((5 * index) / len);
+            sort_at(data, [0, s, 2 * s, 3 * s, 4 * s], is_less);
+            sort_at(data, [1, s + 1, 2 * s + 1, 3 * s + 1, 4 * s + 1], is_less);
+            sort_at(data, [2, s + 2, 2 * s + 2, 3 * s + 2, 4 * s + 2], is_less);
+            sort_at(data, [3, s + 3, 2 * s + 3, 3 * s + 3, 4 * s + 3], is_less);
+            sort_at(data, [4, s + 4, 2 * s + 4, 3 * s + 4, 4 * s + 4], is_less);
+
             // The pivot is the middle element of the selected group
             sort_at(data, [g, g + 1, g + 2, g + 3, g + 4], is_less);
             (g + 2, !is_less(&data[g], &data[g + 4]))
