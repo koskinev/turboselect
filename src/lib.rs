@@ -1069,33 +1069,6 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
     }
 }
 
-#[inline]
-/// Selects a pivot for the given index. First, puts a `N * N` random sample to the beginning
-/// of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements apart.
-/// Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is the
-/// index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
-/// equal.
-fn sample_and_choose<const N: usize, T, F>(
-    data: &mut [T],
-    index: usize,
-    is_less: &mut F,
-    rng: &mut WyRng,
-) -> (usize, bool)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let len = data.len();
-    let sample = sample(data, N * N, rng);
-    let g = N * ((N * index) / len);
-    for j in 0..N {
-        let pos: [_; N] = core::array::from_fn(|i| j + N * i);
-        sort_at(sample, pos, is_less);
-    }
-    let pos: [_; N] = core::array::from_fn(|i| g + i);
-    sort_at(sample, pos, is_less);
-    (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
-}
-
 /// Reorder the slice such that the element at `index` is at its final sorted position.
 ///
 /// This reordering has the additional property that any value at position `i < index` will be
@@ -1198,8 +1171,35 @@ where
         }
         // For larger slices, a similar technique is used, but with randomly sampled elements and
         // larger group sizes.
-        len if len < 4096 => sample_and_choose::<5, _, _>(data, index, is_less, rng),
-        len if len < 65536 => sample_and_choose::<9, _, _>(data, index, is_less, rng),
-        _ => sample_and_choose::<21, _, _>(data, index, is_less, rng),
+        len if len < 4096 => select_pivot_randomized::<5, _, _>(data, index, is_less, rng),
+        len if len < 65536 => select_pivot_randomized::<9, _, _>(data, index, is_less, rng),
+        _ => select_pivot_randomized::<21, _, _>(data, index, is_less, rng),
     }
+}
+
+#[inline]
+/// Selects a pivot for the given index. First, puts a `N * N` random sample to the beginning
+/// of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements apart.
+/// Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is the
+/// index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
+/// equal.
+fn select_pivot_randomized<const N: usize, T, F>(
+    data: &mut [T],
+    index: usize,
+    is_less: &mut F,
+    rng: &mut WyRng,
+) -> (usize, bool)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    let len = data.len();
+    let sample = sample(data, N * N, rng);
+    let g = N * ((N * index) / len);
+    for j in 0..N {
+        let pos: [_; N] = core::array::from_fn(|i| j + N * i);
+        sort_at(sample, pos, is_less);
+    }
+    let pos: [_; N] = core::array::from_fn(|i| g + i);
+    sort_at(sample, pos, is_less);
+    (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
 }
