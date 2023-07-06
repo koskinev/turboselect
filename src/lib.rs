@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod benches;
-mod heapselect;
 mod sort;
 #[cfg(test)]
 mod tests;
