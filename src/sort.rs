@@ -43,18 +43,57 @@ where
         3 => { sort2!(0, 2); sort2!(0, 1); sort2!(1, 2); }
         4 => { sort2!(0, 2); sort2!(1, 3); sort2!(0, 1); sort2!(2, 3); sort2!(1, 2); }
         5 => { 
-            sort2!(0, 1); sort2!(2, 3); sort2!(0, 2); sort2!(1, 3); sort2!(2, 4); sort2!(1, 2); 
-            sort2!(2, 4); 
+            sort2!(0, 1); sort2!(2, 3); sort2!(0, 2); sort2!(1, 3); sort2!(2, 4); 
+            sort2!(1, 2); sort2!(2, 4); 
         }
         6 => { 
-            sort2!(0, 1); sort2!(4, 5); sort2!(0, 5); sort2!(1, 3); sort2!(2, 4); sort2!(0, 2); 
-            sort2!(1, 4); sort2!(3, 5); sort2!(1, 2); sort2!(3, 4); sort2!(2, 3); 
+            sort2!(0, 1); sort2!(4, 5); sort2!(0, 5); sort2!(1, 3); sort2!(2, 4); 
+            sort2!(0, 2); sort2!(1, 4); sort2!(3, 5); sort2!(1, 2); sort2!(3, 4); 
+            sort2!(2, 3); 
+        }
+        7 => {
+            sort2!(0, 6); sort2!(1, 2); sort2!(3, 4); sort2!(0, 2); sort2!(1, 4); 
+            sort2!(3, 5); sort2!(0, 1); sort2!(2, 5); sort2!(4, 6); sort2!(1, 3); 
+            sort2!(2, 4); sort2!(3, 4); sort2!(2, 3);
+        }
+        8 => {
+            sort2!(0, 2); sort2!(1, 3); sort2!(4, 6); sort2!(5, 7);   
+            sort2!(0, 4); sort2!(1, 5); sort2!(2, 6); sort2!(3, 7);   
+            sort2!(0, 1); sort2!(2, 4); sort2!(3, 5); sort2!(6, 7);   
+            sort2!(2, 3); sort2!(4, 5);   
+            sort2!(1, 4); sort2!(3, 6);   
+            sort2!(3, 4);   
         }
         9 => { 
-            sort2!(0, 7); sort2!(1, 2); sort2!(3, 5); sort2!(4, 8); sort2!(0, 2); sort2!(1, 5); 
-            sort2!(3, 8); sort2!(4, 7); sort2!(0, 3); sort2!(1, 4); sort2!(2, 8); sort2!(5, 7);
-            sort2!(3, 4); sort2!(5, 6); sort2!(2, 5); sort2!(4, 6); sort2!(2, 3); sort2!(4, 5);
-            sort2!(3, 4); 
+            sort2!(0, 7); sort2!(1, 2); sort2!(3, 5); sort2!(4, 8); sort2!(0, 2); 
+            sort2!(1, 5); sort2!(3, 8); sort2!(4, 7); sort2!(0, 3); sort2!(1, 4); 
+            sort2!(2, 8); sort2!(5, 7); sort2!(3, 4); sort2!(5, 6); sort2!(2, 5); 
+            sort2!(4, 6); sort2!(2, 3); sort2!(4, 5); sort2!(3, 4); 
+        }
+        10 => {
+            sort2!(0, 1); sort2!(3, 5); sort2!(4, 6); sort2!(8, 9); sort2!(0, 3);   
+            sort2!(1, 5); sort2!(4, 8); sort2!(6, 9); sort2!(1, 3); sort2!(6, 8);   
+            sort2!(0, 6); sort2!(1, 4); sort2!(3, 9); sort2!(5, 8); sort2!(2, 6);   
+            sort2!(3, 7); sort2!(2, 3); sort2!(6, 7); sort2!(3, 4); sort2!(5, 6);   
+            sort2!(3, 5); sort2!(4, 6); sort2!(4, 5); 
+        }
+        11 => {
+            sort2!(0, 1); sort2!(2, 3); sort2!(4, 5); sort2!(6, 7); sort2!(8, 9);   
+            sort2!(0, 5); sort2!(1, 8); sort2!(2, 6); sort2!(3, 7); sort2!(4, 9);   
+            sort2!(0, 2); sort2!(1, 4); sort2!(3, 6); sort2!(5, 8); sort2!(7, 9);   
+            sort2!(2, 7); sort2!(3, 5); sort2!(4, 6); sort2!(1, 2); sort2!(3, 4);   
+            sort2!(5, 6); sort2!(7, 8); sort2!(2, 4); sort2!(5, 7);
+        }
+        15 => {
+            sort2!(0, 1);   sort2!(2, 3);   sort2!(4, 5);  sort2!(6, 7);  sort2!(8, 9);   
+            sort2!(10, 11); sort2!(12, 13); sort2!(0, 9);  sort2!(2, 10); sort2!(3, 11);  
+            sort2!(4, 13);  sort2!(0, 12);  sort2!(1, 13); sort2!(4, 6);  sort2!(7, 9);   
+            sort2!(0, 4);   sort2!(1, 10);  sort2!(3, 12); sort2!(5, 7);  sort2!(6, 8);   
+            sort2!(9, 13);  sort2!(1, 8);   sort2!(2, 4);  sort2!(5, 12); sort2!(9, 11);  
+            sort2!(1, 5);   sort2!(3, 4);   sort2!(8, 12); sort2!(9, 10); sort2!(3, 5);   
+            sort2!(4, 9);   sort2!(8, 10);  sort2!(4, 6);  sort2!(7, 9);  sort2!(5, 7);   
+            sort2!(6, 8);   sort2!(5, 6);   sort2!(7, 8);  sort2!(6, 7);  sort2!(7, 14);  
+            sort2!(6, 7);   
         }
         21 => {
             sort2!(0, 1);   sort2!(2, 3);   sort2!(4, 5);   sort2!(6, 7);   sort2!(8, 9); 
@@ -72,12 +111,59 @@ where
             sort2!(9, 12);  sort2!(7, 9);   sort2!(10, 12); sort2!(9, 10);  sort2!(10, 20); 
             sort2!(9, 10); 
         }
+        25 => {
+            sort2!(0, 1);   sort2!(2, 3);   sort2!(4, 5);   sort2!(6, 7);   sort2!(8, 9);   
+            sort2!(10, 11); sort2!(12, 13); sort2!(14, 15); sort2!(16, 17); sort2!(18, 19); 
+            sort2!(20, 21); sort2!(22, 23); sort2!(0, 2);   sort2!(1, 3);   sort2!(4, 6);   
+            sort2!(5, 7);   sort2!(8, 10);  sort2!(9, 11);  sort2!(12, 14); sort2!(13, 15); 
+            sort2!(16, 18); sort2!(17, 19); sort2!(20, 22); sort2!(21, 23); sort2!(0, 4);   
+            sort2!(1, 5);   sort2!(2, 6);   sort2!(3, 7);   sort2!(8, 12);  sort2!(9, 13);  
+            sort2!(10, 14); sort2!(11, 15); sort2!(16, 20); sort2!(17, 21); sort2!(18, 22); 
+            sort2!(19, 23); sort2!(0, 8);   sort2!(3, 14);  sort2!(5, 13);  sort2!(6, 11);  
+            sort2!(9, 20);  sort2!(10, 18); sort2!(12, 17); sort2!(15, 23); sort2!(1, 17);  
+            sort2!(2, 20);  sort2!(3, 21);  sort2!(4, 18);  sort2!(5, 19);  sort2!(6, 22);  
+            sort2!(7, 15);  sort2!(8, 16);  sort2!(1, 9);   sort2!(2, 10);  sort2!(3, 5);   
+            sort2!(4, 12);  sort2!(11, 19); sort2!(13, 21); sort2!(14, 22); sort2!(18, 20); 
+            sort2!(9, 10);  sort2!(13, 14); sort2!(10, 12); sort2!(11, 13); sort2!(6, 12);  
+            sort2!(9, 10);  sort2!(11, 17); sort2!(13, 14); sort2!(5, 12);  sort2!(6, 16);  
+            sort2!(7, 17);  sort2!(11, 18); sort2!(3, 16);  sort2!(5, 11);  sort2!(7, 20);  
+            sort2!(12, 18); sort2!(7, 11);  sort2!(12, 16); sort2!(7, 10);  sort2!(13, 16); 
+            sort2!(10, 12); sort2!(11, 13); sort2!(11, 12); sort2!(12, 24); sort2!(11, 12); 
+
+        }
+        31 => {
+            sort2!(1, 2);   sort2!(3, 4);   sort2!(5, 6);   sort2!(7, 8);   sort2!(9, 10);  
+            sort2!(11, 12); sort2!(13, 14); sort2!(15, 16); sort2!(17, 18); sort2!(19, 20); 
+            sort2!(21, 22); sort2!(23, 24); sort2!(25, 26); sort2!(27, 28); sort2!(0, 2);   
+            sort2!(3, 5);   sort2!(4, 6);   sort2!(7, 9);   sort2!(8, 10);  sort2!(11, 13); 
+            sort2!(12, 14); sort2!(15, 17); sort2!(16, 18); sort2!(19, 21); sort2!(20, 22); 
+            sort2!(23, 25); sort2!(24, 26); sort2!(27, 29); sort2!(0, 4);   sort2!(1, 5);   
+            sort2!(2, 6);   sort2!(7, 11);  sort2!(8, 12);  sort2!(9, 13);  sort2!(10, 14); 
+            sort2!(15, 19); sort2!(16, 20); sort2!(17, 21); sort2!(18, 22); sort2!(23, 27); 
+            sort2!(24, 28); sort2!(25, 29); sort2!(0, 8);   sort2!(1, 9);   sort2!(2, 10);  
+            sort2!(3, 11);  sort2!(4, 12);  sort2!(5, 13);  sort2!(6, 14);  sort2!(15, 23); 
+            sort2!(16, 24); sort2!(17, 25); sort2!(18, 26); sort2!(19, 27); sort2!(20, 28); 
+            sort2!(21, 29); sort2!(0, 16);  sort2!(1, 17);  sort2!(2, 18);  sort2!(3, 19);  
+            sort2!(4, 20);  sort2!(5, 21);  sort2!(6, 22);  sort2!(7, 23);  sort2!(8, 24);  
+            sort2!(9, 25);  sort2!(10, 26); sort2!(11, 27); sort2!(12, 28); sort2!(13, 29); 
+            sort2!(0, 15);  sort2!(1, 7);   sort2!(2, 23);  sort2!(4, 19);  sort2!(5, 11);  
+            sort2!(6, 27);  sort2!(8, 17);  sort2!(9, 16);  sort2!(10, 25); sort2!(12, 21); 
+            sort2!(13, 20); sort2!(14, 29); sort2!(18, 24); sort2!(22, 28); sort2!(2, 4);   
+            sort2!(3, 24);  sort2!(5, 26);  sort2!(6, 7);   sort2!(8, 9);   sort2!(10, 12); 
+            sort2!(11, 16); sort2!(13, 18); sort2!(17, 19); sort2!(20, 21); sort2!(22, 23); 
+            sort2!(25, 27); sort2!(4, 9);   sort2!(7, 15);  sort2!(10, 13); sort2!(11, 17); 
+            sort2!(12, 18); sort2!(14, 22); sort2!(16, 19); sort2!(20, 25); sort2!(9, 14);  
+            sort2!(12, 13); sort2!(15, 20); sort2!(16, 17); sort2!(5, 16);  sort2!(9, 10);  
+            sort2!(12, 14); sort2!(13, 24); sort2!(15, 17); sort2!(19, 20); sort2!(10, 15); 
+            sort2!(12, 16); sort2!(13, 17); sort2!(14, 19); sort2!(13, 14); sort2!(15, 16); 
+            sort2!(13, 15); sort2!(14, 16); sort2!(14, 15); sort2!(15, 30); sort2!(14, 15); 
+        }
         _ => unimplemented!("median not implemented for N = {N}"),
     }
 }
 
 #[rustfmt::skip]
-/// Sorts the elements at the positions in `pos` so that the smallest element becomes `pos[0]` and
+/// Sorts the elements at the positions in `pos` so that the smallest element becomes `pos0,` and
 /// each element `pos[i]` is less than or equal to the element at `pos[j]` if `i < j`.
 pub(crate) fn sort_at<T, F, const N: usize>(data: &mut [T], pos: [usize; N], is_less: &mut F)
 where
@@ -263,4 +349,44 @@ where
             sort2!(53, 54); sort2!(55, 56); sort2!(57, 58); sort2!(59, 60); 
         } _ => unimplemented!("sort not implemented for N={N}"),
     } 
+}
+
+#[rustfmt::skip]
+pub(crate) fn tinysort<T, F>(data: &mut [T], is_less: &mut F)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    macro_rules! sort2 {
+        ($a:expr, $b:expr) => {
+            swap(data, $a, $b, is_less);
+        };
+    }
+    match data.len() {
+        0 | 1 => {}
+        2 => { sort2!(0, 1); }
+        3 => { sort2!(0, 2); sort2!(0, 1); sort2!(1, 2); }
+        4 => { sort2!(0, 2); sort2!(1, 3); sort2!(0, 1); sort2!(2, 3); sort2!(1, 2); }
+        5 => { 
+            sort2!(0, 3); sort2!(1, 4); sort2!(0, 2); sort2!(1, 3); sort2!(0, 1); 
+            sort2!(2, 4); sort2!(1, 2); sort2!(3, 4); sort2!(2, 3); 
+        }
+        6 => { 
+            sort2!(0, 5); sort2!(1, 3); sort2!(2, 4); sort2!(1, 2); sort2!(3, 4); 
+            sort2!(0, 3); sort2!(2, 5); sort2!(0, 1); sort2!(2, 3); sort2!(4, 5); 
+            sort2!(1, 2); sort2!(3, 4); 
+        }
+        7 => { 
+            sort2!(0, 6); sort2!(2, 3); sort2!(4, 5); sort2!(0, 2); sort2!(1, 4); 
+            sort2!(3, 6); sort2!(0, 1); sort2!(2, 5); sort2!(3, 4); sort2!(1, 2); 
+            sort2!(4, 6); sort2!(2, 3); sort2!(4, 5); sort2!(1, 2); sort2!(3, 4); 
+            sort2!(5, 6); 
+        }
+        8 => { 
+            sort2!(0, 2); sort2!(1, 3); sort2!(4, 6); sort2!(5, 7); sort2!(0, 4); 
+            sort2!(1, 5); sort2!(2, 6); sort2!(3, 7); sort2!(0, 1); sort2!(2, 3); 
+            sort2!(4, 5); sort2!(6, 7); sort2!(2, 4); sort2!(3, 5); sort2!(1, 4); 
+            sort2!(3, 6); sort2!(1, 2); sort2!(3, 4); sort2!(5, 6); 
+        }
+        _ => unimplemented!("tinysort not implemented for data.len() > 8")
+    }
 }
