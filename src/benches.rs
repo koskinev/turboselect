@@ -143,7 +143,7 @@ fn quickselect_perf() {
     eprintln!("Running each benchmark for at least {min_duration:.2} seconds and at least {MIN_RUNS} times. The tests and the baseline runs are randomly interleaved.");
     eprintln!("Data preparation is ignored in the timing.\n");
 
-    eprintln!("| data type          | slice length | index       | throughput, runs/sec | baseline, runs/sec | ratio |");
+    eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
     eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
 
     fn run<P, T>(label: &str, mut prep: P, runs: &mut Vec<Comparison>)
@@ -151,7 +151,7 @@ fn quickselect_perf() {
         P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
         T: Ord,
     {
-        let lens = [100, 1_000, 10_000, /* 1_000_000, 100_000_000 */ ];
+        let lens = [1_000, 10_000, 1_000_000, 100_000_000];
         let p001 = |count: usize| count / 1000;
         let p01 = |count: usize| count / 100;
         let p05 = |count: usize| count / 20;
@@ -179,6 +179,7 @@ fn quickselect_perf() {
             )
         };
 
+        const MILLION: u128 = 1_000_000;
         for len in lens {
             for p in percentiles {
                 let index = p(len);
@@ -187,10 +188,10 @@ fn quickselect_perf() {
                     index,
                     format!("{label} (len = {len}, index = {index})",),
                 );
-                let throughput = comparison.timings.runs as f64
-                    / (comparison.timings.nanosecs as f64 / BILLION as f64);
-                let baseline = comparison.baseline.runs as f64
-                    / (comparison.baseline.nanosecs as f64 / BILLION as f64);
+                let throughput = (len * comparison.timings.runs) as f64
+                    / ((MILLION * comparison.timings.nanosecs) as f64 / BILLION as f64);
+                let baseline = (len * comparison.baseline.runs) as f64
+                    / ((MILLION * comparison.baseline.nanosecs) as f64 / BILLION as f64);
                 let ratio = throughput / baseline;
                 eprintln!(
                     "| {label:<18} | {len:<12} | {index:<11} | {throughput:<20.03} | {baseline:<18.03} | {ratio:<5.03} |",
@@ -220,7 +221,7 @@ fn miniselect_perf() {
     eprintln!("Running each benchmark for at least {min_duration:.2} seconds and at least {MIN_RUNS} times. The tests and the baseline runs are randomly interleaved.");
     eprintln!("Data preparation is ignored in the timing.\n");
 
-    eprintln!("| data type          | slice length | index       | throughput, runs/sec | baseline, runs/sec | ratio |");
+    eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
     eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
 
     fn run<P, T>(label: &str, mut prep: P, runs: &mut Vec<Comparison>)
@@ -255,6 +256,7 @@ fn miniselect_perf() {
             )
         };
 
+        const MILLION: u128 = 1_000_000;
         for len in lens {
             for p in percentiles {
                 let index = p(len);
@@ -263,10 +265,10 @@ fn miniselect_perf() {
                     index,
                     format!("{label} (len = {len}, index = {index})",),
                 );
-                let throughput = comparison.timings.runs as f64
-                    / (comparison.timings.nanosecs as f64 / BILLION as f64);
-                let baseline = comparison.baseline.runs as f64
-                    / (comparison.baseline.nanosecs as f64 / BILLION as f64);
+                let throughput = (len * comparison.timings.runs) as f64
+                    / ((MILLION * comparison.timings.nanosecs) as f64 / BILLION as f64);
+                let baseline = (len * comparison.baseline.runs) as f64
+                    / ((MILLION * comparison.baseline.nanosecs) as f64 / BILLION as f64);
                 let ratio = throughput / baseline;
                 eprintln!(
                     "| {label:<18} | {len:<12} | {index:<11} | {throughput:<20.03} | {baseline:<18.03} | {ratio:<5.03} |",
