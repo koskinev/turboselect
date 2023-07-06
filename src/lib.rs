@@ -11,7 +11,7 @@ use core::{
     ops::{Deref, DerefMut, Range},
     ptr,
 };
-use sort::{median_at, sort_at};
+use sort::{median_at, sort_at, tinysort};
 use wyrand::WyRng;
 
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
@@ -57,45 +57,113 @@ impl<T> Elem<T> {
     }
 }
 
-/// 
+///
 fn miniselect<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let mut l = data.as_mut_ptr();
-    let (mut r, k) = unsafe { (l.add(data.len() - 1), l.add(index)) };
-    while l < r {
-        let mut p = l;
-        let mut q = r;
-        unsafe {
-            let x = ManuallyDrop::new(ptr::read(k));
-            loop {
-                while is_less(&*p, &x) {
-                    p = p.add(1);
-                }
-                while is_less(&x, &*q) {
-                    q = q.sub(1);
-                }
-                if p <= q {
-                    let tmp = ManuallyDrop::new(ptr::read(p));
-                    p.copy_from(q, 1);
-                    q.write(ManuallyDrop::into_inner(tmp));
-                    p = p.add(1);
-                    q = q.sub(1);
-                }
-                if p > q {
-                    break;
+    fn select_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+    where
+        F: FnMut(&T, &T) -> bool,
+    {
+        use core::cmp::Ordering::{Greater, Less};
+
+        let (min, _) = data
+            .iter()
+            .enumerate()
+            .min_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
+            .unwrap();
+        data.swap(0, min);
+        (0, 0)
+    }
+
+    fn select_max<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+    where
+        F: FnMut(&T, &T) -> bool,
+    {
+        use core::cmp::Ordering::{Greater, Less};
+
+        let last = data.len() - 1;
+        let (max, _) = data
+            .iter()
+            .enumerate()
+            .max_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
+            .unwrap();
+        data.swap(max, last);
+        (last, last)
+    }
+
+    if index == 0 {
+        select_min(data, is_less)
+    } else if index == data.len() - 1 {
+        select_max(data, is_less)
+    } else {
+        match data.len() {
+            len if len < 9 => tinysort(data, is_less),
+            _ => {
+                sort_at(data, [0, 1, 2, 3, 4], is_less);
+                data.swap(index, 2);
+                let mut l = data.as_mut_ptr();
+                let (mut r, k) = unsafe { (l.add(data.len() - 1), l.add(index)) };
+                while l < r {
+                    let mut p = l;
+                    let mut q = r;
+                    if p == k {
+                        let mut min = k;
+                        while q > k {
+                            unsafe {
+                                if is_less(&*q, &*min) {
+                                    min = q;
+                                }
+                                q = q.sub(1);
+                            }
+                        }
+                        unsafe { k.swap(min) };
+                        break;
+                    }
+                    if k == q {
+                        let mut max = k;
+                        while p < k {
+                            unsafe {
+                                if is_less(&*max, &*p) {
+                                    max = p;
+                                }
+                                p = p.add(1);
+                            }
+                        }
+                        unsafe { k.swap(max) };
+                        break;
+                    }
+                    unsafe {
+                        let x = ManuallyDrop::new(ptr::read(k));
+                        loop {
+                            while is_less(&*p, &x) {
+                                p = p.add(1);
+                            }
+                            while is_less(&x, &*q) {
+                                q = q.sub(1);
+                            }
+                            if p <= q {
+                                p.swap(q);
+                                p = p.add(1);
+                                q = q.sub(1);
+                            }
+                            if p > q {
+                                break;
+                            }
+                        }
+                    }
+                    if q < k {
+                        l = p;
+                    }
+                    if k < p {
+                        r = q;
+                    }
                 }
             }
         }
-        if q < k {
-            l = p;
-        }
-        if k < p {
-            r = q;
-        }
+        (index, index)
     }
-    (index, index)
 }
 
 /// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
@@ -925,7 +993,7 @@ where
     assert!(index < data.len());
     let mut offset = 0;
     let mut was = None;
-    while data.len() > 12 {
+    while data.len() > 24 {
         let (u, v) = match index {
             0 => partition_min(data, 0, is_less),
             i if i == data.len() - 1 => partition_max(data, 0, is_less),
@@ -949,8 +1017,8 @@ where
         // Descend into the appropriate part of the slice or terminate if the pivot is in the
         // correct position.
         if index < u {
-            // Select the left part. We don't store the pivot, since all elements on the left are
-            // smaller than the pivot.
+            // Select the left part. We don't store the pivot, since all elements on the left
+            // are smaller than the pivot.
             data = data[..u].as_mut();
         } else if index > v {
             // Select the right part. Elements on the right can be equal to the pivot,
@@ -1000,6 +1068,33 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
         src.write(ManuallyDrop::into_inner(tmp));
         &mut data[..count]
     }
+}
+
+#[inline]
+/// Selects a pivot for the given index. First, puts a `N * N` random sample to the beginning
+/// of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements apart.
+/// Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is the
+/// index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
+/// equal.
+fn sample_and_choose<const N: usize, T, F>(
+    data: &mut [T],
+    index: usize,
+    is_less: &mut F,
+    rng: &mut WyRng,
+) -> (usize, bool)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    let len = data.len();
+    let sample = sample(data, N * N, rng);
+    let g = N * ((N * index) / len);
+    for j in 0..N {
+        let pos: [_; N] = core::array::from_fn(|i| j + N * i);
+        sort_at(sample, pos, is_less);
+    }
+    let pos: [_; N] = core::array::from_fn(|i| g + i);
+    sort_at(sample, pos, is_less);
+    (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
 }
 
 /// Reorder the slice such that the element at `index` is at its final sorted position.
@@ -1061,33 +1156,6 @@ where
     let (left, rest) = data.split_at_mut(index);
     let (pivot, right) = rest.split_first_mut().unwrap();
     (left, pivot, right)
-}
-
-#[inline]
-/// Selects a pivot for the given index. First, puts a `N * N` random sample to the beginning
-/// of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements apart.
-/// Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is the
-/// index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
-/// equal.
-fn sample_and_choose<const N: usize, T, F>(
-    data: &mut [T],
-    index: usize,
-    is_less: &mut F,
-    rng: &mut WyRng,
-) -> (usize, bool)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let len = data.len();
-    let sample = sample(data, N * N, rng);
-    let g = N * ((N * index) / len);
-    for j in 0..N {
-        let pos: [_; N] = core::array::from_fn(|i| j + N * i);
-        sort_at(sample, pos, is_less);
-    }
-    let pos: [_; N] = core::array::from_fn(|i| g + i);
-    sort_at(sample, pos, is_less);
-    (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
 }
 
 /// Selects the pivot element for partitioning the slice. Returns `(p, r)` where `p` is the index
