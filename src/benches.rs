@@ -1,4 +1,4 @@
-use crate::{quickselect, wyrand::WyRng};
+use crate::{miniselect, quickselect, wyrand::WyRng};
 
 /// Returns a vector of `count` random `u32` values.
 fn random_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
@@ -34,7 +34,7 @@ fn sawtooth_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
     let mut data = Vec::with_capacity(count);
     let count = count as u32;
     let max_lenght = (count as f64).sqrt() as u32;
-    let length = rng.bounded_u32(max_lenght / 4, max_lenght);
+    let length = rng.bounded_u32(max_lenght / 4 + 1, max_lenght);
     for index in 0..count {
         let x = index % length;
         data.push(x);
@@ -54,46 +54,20 @@ fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
 #[derive(Debug)]
 struct Timings {
     runs: usize,
-    total: f64,
-    throughput: f64,
-    avg: f64,
-    min: f64,
-    max: f64,
-    median: f64,
+    nanosecs: u128,
 }
 
 impl Timings {
     fn from_times(data: &[u128]) -> Self {
         let runs = data.len();
-        let total = data.iter().sum::<u128>() as f64 / 1_000_000_000.0_f64;
-        let avg = total / runs as f64;
-        let min = *data
-            .iter()
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-        let max = *data
-            .iter()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-        let mut data = data.to_vec();
-        let (_, &mut median, _) =
-            data.select_nth_unstable_by(runs / 2, |a, b| a.partial_cmp(b).unwrap());
-        Self {
-            runs,
-            total,
-            throughput: runs as f64 / total,
-            avg,
-            min: min as f64 / 1_000_000_000.0_f64,
-            max: max as f64 / 1_000_000_000.0_f64,
-            median: median as f64 / 1_000_000_000.0_f64,
-        }
+        let nanosecs = data.iter().sum::<u128>();
+        Self { runs, nanosecs }
     }
 }
 
 #[derive(Debug)]
 struct Comparison {
     label: String,
-    throughput_ratio: f64,
     timings: Timings,
     baseline: Timings,
 }
@@ -102,14 +76,14 @@ impl Comparison {
     fn new(label: impl Into<String>, timings: Timings, baseline: Timings) -> Self {
         Self {
             label: label.into(),
-            throughput_ratio: timings.throughput / baseline.throughput,
             timings,
             baseline,
         }
     }
 }
 
-const MIN_DURATION: u128 = 5 * 1_000_000_000;
+const BILLION: u128 = 1_000_000_000;
+const MIN_DURATION: u128 = 5 * BILLION;
 const MIN_RUNS: usize = 250;
 const MAX_RUNS: usize = 100_000;
 
@@ -161,7 +135,7 @@ fn quickselect_perf() {
     // cargo flamegraph --unit-test -- quickselect_perf --ignored
 
     let mut runs = Vec::new();
-    let min_duration = MIN_DURATION as f64 / 1_000_000_000_f64;
+    let min_duration = MIN_DURATION as f64 / BILLION as f64;
 
     eprintln!(
         "Comparing quickselect with custom pivot selection to core::slice::select_nth_unstable."
@@ -177,7 +151,7 @@ fn quickselect_perf() {
         P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
         T: Ord,
     {
-        let counts = [1_000, 10_000, 1_000_000, 100_000_000];
+        let lens = [100, 1_000, 10_000, /* 1_000_000, 100_000_000 */ ];
         let p001 = |count: usize| count / 1000;
         let p01 = |count: usize| count / 100;
         let p05 = |count: usize| count / 20;
@@ -205,19 +179,97 @@ fn quickselect_perf() {
             )
         };
 
-        for count in counts {
+        for len in lens {
             for p in percentiles {
-                let index = p(count);
+                let index = p(len);
                 let comparison = compare(
-                    count,
+                    len,
                     index,
-                    format!("{label} (count = {count}, index = {index})",),
+                    format!("{label} (len = {len}, index = {index})",),
                 );
+                let throughput = comparison.timings.runs as f64
+                    / (comparison.timings.nanosecs as f64 / BILLION as f64);
+                let baseline = comparison.baseline.runs as f64
+                    / (comparison.baseline.nanosecs as f64 / BILLION as f64);
+                let ratio = throughput / baseline;
                 eprintln!(
-                    "| {label:<18} | {count:<12} | {index:<11} | {tput:<20.02} | {baseline:<18.02} | {ratio:<5.03} |",
-                    tput = comparison.timings.throughput,
-                    baseline = comparison.baseline.throughput,
-                    ratio = comparison.throughput_ratio
+                    "| {label:<18} | {len:<12} | {index:<11} | {throughput:<20.03} | {baseline:<18.03} | {ratio:<5.03} |",
+                );
+                runs.push(comparison);
+            }
+        }
+    }
+
+    run("random (u32)", random_u32s, &mut runs);
+    run("sawtooth (u32)", sawtooth_u32s, &mut runs);
+    run("reversed (u32)", reversed_u32s, &mut runs);
+    run("random dups (u32s)", random_u32s_dups, &mut runs);
+    run("random (bool)", random_bools, &mut runs);
+}
+
+#[test]
+#[ignore]
+fn miniselect_perf() {
+    // cargo test -r miniselect_perf -- --nocapture --ignored
+    // cargo flamegraph --unit-test -- miniselect_perf --ignored
+
+    let mut runs = Vec::new();
+    let min_duration = MIN_DURATION as f64 / BILLION as f64;
+
+    eprintln!("Comparing Wirth selection with core::slice::select_nth_unstable.");
+    eprintln!("Running each benchmark for at least {min_duration:.2} seconds and at least {MIN_RUNS} times. The tests and the baseline runs are randomly interleaved.");
+    eprintln!("Data preparation is ignored in the timing.\n");
+
+    eprintln!("| data type          | slice length | index       | throughput, runs/sec | baseline, runs/sec | ratio |");
+    eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
+
+    fn run<P, T>(label: &str, mut prep: P, runs: &mut Vec<Comparison>)
+    where
+        P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
+        T: Ord,
+    {
+        let lens = [8, 12, 16, 24];
+        let p05 = |count: usize| count / 20;
+        let p25 = |count: usize| count / 4;
+        let p50 = |count: usize| count / 2;
+        let p75 = |count: usize| count * 3 / 4;
+        let p95 = |count: usize| count * 19 / 20;
+        let percentiles = [p05, p25, p50, p75, p95];
+
+        let mut rng = WyRng::new(123456789);
+
+        let mut compare = |count, index, label| {
+            bench(
+                label,
+                || prep(count, rng.as_mut()),
+                |data| {
+                    miniselect(data, index, &mut T::lt);
+                },
+                |data| {
+                    data.select_nth_unstable(index);
+                },
+                |data| {
+                    let nth = &data[index];
+                    data[..index].iter().all(|x| x <= nth) && data[index..].iter().all(|x| x >= nth)
+                },
+            )
+        };
+
+        for len in lens {
+            for p in percentiles {
+                let index = p(len);
+                let comparison = compare(
+                    len,
+                    index,
+                    format!("{label} (len = {len}, index = {index})",),
+                );
+                let throughput = comparison.timings.runs as f64
+                    / (comparison.timings.nanosecs as f64 / BILLION as f64);
+                let baseline = comparison.baseline.runs as f64
+                    / (comparison.baseline.nanosecs as f64 / BILLION as f64);
+                let ratio = throughput / baseline;
+                eprintln!(
+                    "| {label:<18} | {len:<12} | {index:<11} | {throughput:<20.03} | {baseline:<18.03} | {ratio:<5.03} |",
                 );
                 runs.push(comparison);
             }
