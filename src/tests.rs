@@ -1,8 +1,8 @@
 use crate::{
-    partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
+    miniselect, partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
     select_nth_unstable,
     sort::{median_at, sort_at},
-    wyrand::WyRng, miniselect, heapselect::{heapselect},
+    wyrand::WyRng,
 };
 
 fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -80,12 +80,13 @@ fn sawtooth() {
     let repeat = 10;
 
     /// Returns a vector of `u32`s with a sawtooth pattern.
-    fn sawtooth_u32s(count: usize, _rng: &mut WyRng) -> Vec<usize> {
+    fn sawtooth_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
         let mut data = Vec::with_capacity(count);
-        let count = count;
-        let sqrt_count = (count as f64).sqrt() as usize;
+        let count = count as u32;
+        let max_lenght = (count as f64).sqrt() as u32;
+        let length = rng.bounded_u32(max_lenght / 4 + 1, max_lenght);
         for index in 0..count {
-            let x = index % sqrt_count;
+            let x = index % length;
             data.push(x);
         }
         data
@@ -267,29 +268,6 @@ fn nth_mini() {
 }
 
 #[test]
-fn nth_heap() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let max = 100;
-    let mut rng = WyRng::new(123);
-
-    for _iter in 0..repeat {
-        let count = rng.bounded_usize(1, max);
-        let high = rng.bounded_usize(0, count);
-
-        let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
-        let index = rng.bounded_usize(0, count);
-        heapselect(data.as_mut_slice(), index, &mut usize::lt);
-        let nth = data[index];
-        assert!(data[..index].iter().all(|elem| elem <= &nth));
-        assert!(data[index..].iter().all(|elem| elem >= &nth));
-    }
-}
-
-#[test]
 fn sample_n() {
     #[cfg(not(miri))]
     let repeat = 1000;
@@ -413,7 +391,6 @@ fn test_median<const N: usize>() {
     }
 }
 
-
 #[test]
 fn sorts() {
     test_sort::<2>();
@@ -436,6 +413,11 @@ fn medians() {
     test_median::<4>();
     test_median::<5>();
     test_median::<6>();
+    test_median::<6>();
+    test_median::<7>();
+    test_median::<8>();
     test_median::<9>();
+    test_median::<15>();
     test_median::<21>();
+    test_median::<31>();
 }
