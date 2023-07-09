@@ -1,3 +1,8 @@
+#[cfg(feature = "std")]
+extern crate std;
+
+use std::{eprint, eprintln, vec::Vec};
+
 use crate::{
     miniselect, partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
     select_nth_unstable,
@@ -6,7 +11,7 @@ use crate::{
 };
 
 fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
-    std::iter::from_fn(move || Some(rng.bounded_usize(0, high))).take(count)
+    core::iter::from_fn(move || Some(rng.bounded_usize(0, high))).take(count)
 }
 
 fn shuffle<T>(data: &mut [T], rng: &mut WyRng) {
@@ -25,12 +30,11 @@ fn block_dual() {
     #[cfg(miri)]
     let repeat = 10;
 
-    let max_count = 30;
+    let max_count = 1000;
     let mut rng = WyRng::new(123);
 
     for _iter in 0..repeat {
         let count = rng.bounded_usize(1, max_count);
-
         let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
 
         let x = rng.bounded_usize(0, count);
@@ -353,7 +357,7 @@ fn max_10() {
     assert_eq!(v, 9);
 }
 
-fn test_sort<const N: usize>() {
+fn sort_indexed<const N: usize>() {
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -370,7 +374,7 @@ fn test_sort<const N: usize>() {
     }
 }
 
-fn test_median<const N: usize>() {
+fn median_indexed<const N: usize>() {
     #[cfg(not(miri))]
     let repeat = 1000;
     #[cfg(miri)]
@@ -393,31 +397,31 @@ fn test_median<const N: usize>() {
 
 #[test]
 fn sorts() {
-    test_sort::<2>();
-    test_sort::<3>();
-    test_sort::<4>();
-    test_sort::<5>();
-    test_sort::<6>();
-    test_sort::<7>();
-    test_sort::<8>();
-    test_sort::<9>();
-    test_sort::<15>();
-    test_sort::<21>();
-    test_sort::<63>();
+    sort_indexed::<2>();
+    sort_indexed::<3>();
+    sort_indexed::<4>();
+    sort_indexed::<5>();
+    sort_indexed::<6>();
+    sort_indexed::<7>();
+    sort_indexed::<8>();
+    sort_indexed::<9>();
+    sort_indexed::<15>();
+    sort_indexed::<21>();
+    sort_indexed::<63>();
 }
 
 #[test]
 fn medians() {
-    test_median::<2>();
-    test_median::<3>();
-    test_median::<4>();
-    test_median::<5>();
-    test_median::<6>();
-    test_median::<6>();
-    test_median::<7>();
-    test_median::<8>();
-    test_median::<9>();
-    test_median::<15>();
-    test_median::<21>();
-    test_median::<31>();
+    median_indexed::<2>();
+    median_indexed::<3>();
+    median_indexed::<4>();
+    median_indexed::<5>();
+    median_indexed::<6>();
+    median_indexed::<6>();
+    median_indexed::<7>();
+    median_indexed::<8>();
+    median_indexed::<9>();
+    median_indexed::<15>();
+    median_indexed::<21>();
+    median_indexed::<31>();
 }
