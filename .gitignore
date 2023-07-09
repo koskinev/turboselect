@@ -1,6 +1,8 @@
 /.vscode
+/.ipynb_checkpoints
 /target
 /Cargo.lock
+/misc
 flamegraph.svg
 perf.data
 perf.data.old
