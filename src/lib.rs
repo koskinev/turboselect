@@ -1,6 +1,11 @@
+#![no_std]
+
+#[cfg(feature = "std")]
 #[cfg(test)]
 mod benches;
 mod sort;
+
+#[cfg(feature = "std")]
 #[cfg(test)]
 mod tests;
 mod wyrand;
@@ -591,12 +596,15 @@ where
         unsafe { r.offset_from(l) as usize }
     }
 
-    fn saturating_width<T>(l: *mut T, r: *mut T) -> usize {
-        if l <= r {
-            width(l, r)
-        } else {
-            0
-        }
+    macro_rules! left {
+        ($p:expr) => {
+            l.add(*$p as usize)
+        };
+    }
+    macro_rules! right {
+        ($p:expr) => {
+            r.sub(*$p as usize + 1)
+        };
     }
 
     loop {
@@ -692,17 +700,6 @@ where
         let count = core::cmp::min(width(start_l, end_l), width(start_r, end_r));
 
         if count > 0 {
-            macro_rules! left {
-                () => {
-                    l.add(*start_l as usize)
-                };
-            }
-            macro_rules! right {
-                () => {
-                    r.sub(*start_r as usize + 1)
-                };
-            }
-
             // Instead of swapping one pair at the time, it is more efficient to perform a
             // cyclic permutation. This is not strictly equivalent to swapping,
             // but produces a similar result using fewer memory operations.
@@ -725,44 +722,49 @@ where
             // The calls to `copy_nonoverlapping` are safe because `left!` and `right!` are
             // guaranteed not to overlap, and are valid because of the reasoning above.
             unsafe {
+                // The first `mid_l` and `mid_r` elements of `offsets_l` and `offsets_r` are used to
+                // store offsets to elements that should be moved to the extreme left and right,
+                // respectively.
                 let mut mid_l = start_l;
                 let mut mid_r = start_r;
-                let tmp = ptr::read(left!());
 
+                let tmp = ptr::read(left!(start_l));
                 *mid_l = *start_l;
-                mid_l = mid_l.add(!is_less(&*right!(), low) as usize);
-                ptr::copy_nonoverlapping(right!(), left!(), 1);
+                mid_l = mid_l.add(!is_less(&*right!(start_r), low) as usize);
+                ptr::copy_nonoverlapping(right!(start_r), left!(start_l), 1);
                 for _ in 1..count {
                     start_l = start_l.add(1);
                     *mid_r = *start_r;
-                    mid_r = mid_r.add(!is_less(high, &*left!()) as usize);
-                    ptr::copy_nonoverlapping(left!(), right!(), 1);
+                    mid_r = mid_r.add(!is_less(high, &*left!(start_l)) as usize);
+                    ptr::copy_nonoverlapping(left!(start_l), right!(start_r), 1);
 
                     start_r = start_r.add(1);
                     *mid_l = *start_l;
-                    mid_l = mid_l.add(!is_less(&*right!(), low) as usize);
-                    ptr::copy_nonoverlapping(right!(), left!(), 1);
+                    mid_l = mid_l.add(!is_less(&*right!(start_r), low) as usize);
+                    ptr::copy_nonoverlapping(right!(start_r), left!(start_l), 1);
                 }
                 *mid_r = *start_r;
                 mid_r = mid_r.add(!is_less(high, &tmp) as usize);
-                ptr::copy_nonoverlapping(&tmp, right!(), 1);
+                ptr::copy_nonoverlapping(&tmp, right!(start_r), 1);
                 core::mem::forget(tmp);
 
                 start_l = start_l.add(1);
                 start_r = start_r.add(1);
 
+                // Move the elements that should go to the middle to the extreme left
                 let count_l = width(start_l.sub(count), mid_l);
                 mid_l = start_l.sub(count);
                 for _ in 0..count_l {
-                    ptr::swap(l.add(*mid_l as usize), p);
+                    ptr::swap(left!(mid_l), p);
                     mid_l = mid_l.add(1);
                     p = p.add(1);
                 }
 
+                // Move the elements that should go to the middle to the extreme right
                 let count_r = width(start_r.sub(count), mid_r);
                 mid_r = start_r.sub(count);
                 for _ in 0..count_r {
-                    ptr::swap(r.sub(*mid_r as usize + 1), q.sub(1));
+                    ptr::swap(right!(mid_r), q.sub(1));
                     mid_r = mid_r.add(1);
                     q = q.sub(1);
                 }
@@ -827,9 +829,7 @@ where
                 r = r.sub(1);
             }
         }
-        if r > s {
-            l = unsafe { r.sub(1) };
-        }
+        l = r;
     } else if start_r < end_r {
         // The right block remains.
         // Move its remaining out-of-order elements to the far left.
@@ -847,43 +847,27 @@ where
                 l = l.add(1);
             }
         }
-        if l < e {
-            r = unsafe { l.add(1) };
-        }
+        r = l;
     } else {
         // Nothing else to do, we're done.
-        if l < e {
-            r = unsafe { l.add(1) };
-        }
     }
 
-    unsafe {
-        if l < e && is_less(&*l, low) {
-            l = l.add(1);
-        }
-        if r > s && is_less(high, &*r.sub(1)) {
-            r = r.sub(1);
-        }
-    }
-
-    // Move the temporary partition in the beginning of the slice to the middle.
-    let (a, b) = (saturating_width(p, l), width(s, p));
-    for offset in 0..core::cmp::min(a, b) {
+    // Move the temporary partitions to the middle.
+    let (lt_l, bw_l) = (width(p, l), width(s, p));
+    let (gt_r, bw_r) = (width(r, q), width(q, e));
+    for offset in 0..lt_l.min(bw_l) {
         unsafe {
             l = l.sub(1);
             ptr::swap_nonoverlapping(s.add(offset), l, 1);
         }
     }
-
-    // Move the temporary partition in the end of the slice to the middle.
-    let (c, d) = (saturating_width(r, q), width(q, e));
-    for offset in 0..core::cmp::min(c, d) {
+    for offset in 0..gt_r.min(bw_r) {
         unsafe {
             ptr::swap_nonoverlapping(r, e.sub(offset + 1), 1);
             r = r.add(1);
         }
     }
-    let (u, v) = (a, data.len() - c);
+    let (u, v) = (lt_l, lt_l + bw_l + bw_r);
     (u, v)
 }
 
