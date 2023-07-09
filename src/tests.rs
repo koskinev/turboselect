@@ -1,7 +1,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
-use std::{eprint, eprintln, vec::Vec};
+use std::vec::Vec;
 
 use crate::{
     miniselect, partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
