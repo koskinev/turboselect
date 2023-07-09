@@ -5,6 +5,12 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[dependencies]
+
+[features]
+default = ["std"]
+std = []
+
 [profile.release]
 opt-level = 3
 debug = true
@@ -12,13 +18,3 @@ split-debuginfo = '...'  # Platform-specific.
 debug-assertions = false
 overflow-checks = false
 lto = true
-
-# [profile.test]
-# opt-level = 3
-# debug = true
-# split-debuginfo = '...'  # Platform-specific.
-# debug-assertions = false
-# overflow-checks = false
-# lto = true
-
-[dependencies]
