@@ -15,7 +15,7 @@ use core::{
     ops::{Deref, DerefMut, Range},
     ptr,
 };
-use sort::{median_at, sort_at, tinysort};
+use sort::{sort_at, tinysort};
 use wyrand::WyRng;
 
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
@@ -66,37 +66,6 @@ fn miniselect<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, us
 where
     F: FnMut(&T, &T) -> bool,
 {
-    fn select_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
-    where
-        F: FnMut(&T, &T) -> bool,
-    {
-        use core::cmp::Ordering::{Greater, Less};
-
-        let (min, _) = data
-            .iter()
-            .enumerate()
-            .min_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
-            .unwrap();
-        data.swap(0, min);
-        (0, 0)
-    }
-
-    fn select_max<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
-    where
-        F: FnMut(&T, &T) -> bool,
-    {
-        use core::cmp::Ordering::{Greater, Less};
-
-        let last = data.len() - 1;
-        let (max, _) = data
-            .iter()
-            .enumerate()
-            .max_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
-            .unwrap();
-        data.swap(max, last);
-        (last, last)
-    }
-
     if index == 0 {
         select_min(data, is_less)
     } else if index == data.len() - 1 {
@@ -235,26 +204,9 @@ fn partition_equal<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usiz
 where
     F: FnMut(&T, &T) -> bool,
 {
-    data.swap(0, index);
-    let len = data.len();
-    let (head, tail) = data.split_first_mut().unwrap();
-
-    let (u, v) = {
-        // Read the pivot into the stack.
-        // SAFETY: `head` is not accessed again before the end of this block.
-        let pivot = unsafe { Elem::new(head) };
-        if index < len / 2 {
-            let v = partition_in_blocks(tail, &*pivot, &mut |a, b| !is_less(b, a));
-            let u = partition_in_blocks(&mut tail[..v], &*pivot, is_less);
-            (u, v)
-        } else {
-            let u = partition_in_blocks(tail, &*pivot, is_less);
-            let w = partition_in_blocks(&mut tail[u..], &*pivot, &mut |a, b| !is_less(b, a));
-            (u, u + w)
-        }
-    };
-    data.swap(0, u);
-    (u, v)
+    let u = partition_at(data, index, is_less).0;
+    let dups = partition_min(data[u..].as_mut(), 0, is_less).1;
+    (u, u + dups)
 }
 
 /// Partitions `data` into elements smaller than `pivot`, followed by elements greater than or equal
@@ -727,6 +679,37 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
     }
 }
 
+fn select_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    use core::cmp::Ordering::{Greater, Less};
+
+    let (min, _) = data
+        .iter()
+        .enumerate()
+        .min_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
+        .unwrap();
+    data.swap(0, min);
+    (0, 0)
+}
+
+fn select_max<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    use core::cmp::Ordering::{Greater, Less};
+
+    let last = data.len() - 1;
+    let (max, _) = data
+        .iter()
+        .enumerate()
+        .max_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
+        .unwrap();
+    data.swap(max, last);
+    (last, last)
+}
+
 /// Reorder the slice such that the element at `index` is at its final sorted position.
 ///
 /// This reordering has the additional property that any value at position `i < index` will be
@@ -781,8 +764,13 @@ where
 
     let mut rng = WyRng::new(seed);
 
-    quickselect(data, index, &mut T::lt, rng.as_mut());
-
+    if index == 0 {
+        select_min(data, &mut T::lt);
+    } else if index == data.len() - 1 {
+        select_max(data, &mut T::lt);
+    } else {
+        quickselect(data, index, &mut T::lt, rng.as_mut());
+    }
     let (left, rest) = data.split_at_mut(index);
     let (pivot, right) = rest.split_first_mut().unwrap();
     (left, pivot, right)
@@ -800,48 +788,30 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     match data.len() {
-        // If the slice is small, use median of three.
+        // If the slice is small, select the pivot as median of five elements.
         len if len < 32 => {
-            let p = len / 2;
-            sort_at(data, [0, p, len - 1], is_less);
-            (p, !is_less(&data[0], &data[len - 1]))
+            sort_at(data, [0, len / 4, len / 2, 3 * len / 4, len - 1], is_less);
+            (len / 2, !is_less(&data[0], &data[len / 2]))
         }
-        // For slightly larger slices, use the median of 5 elements.
-        len if len < 128 => {
-            let p = len / 2;
-            median_at(data, [0, p / 2, p, p + p / 2, len - 1], is_less);
-            (p, !is_less(&data[p - 1], &data[p + 1]))
-        }
-        // For slices of size 128 to 1024, sort 5 groups of 5 elements each, then select the
-        // group based on the index, sort the group and return the position of the middle element.
-        len if len < 1024 => {
-            let s = len / 5;
-            let g = s * ((5 * index) / len);
-            sort_at(data, [0, s, 2 * s, 3 * s, 4 * s], is_less);
-            sort_at(data, [1, s + 1, 2 * s + 1, 3 * s + 1, 4 * s + 1], is_less);
-            sort_at(data, [2, s + 2, 2 * s + 2, 3 * s + 2, 4 * s + 2], is_less);
-            sort_at(data, [3, s + 3, 2 * s + 3, 3 * s + 3, 4 * s + 3], is_less);
-            sort_at(data, [4, s + 4, 2 * s + 4, 3 * s + 4, 4 * s + 4], is_less);
-
-            // The pivot is the middle element of the selected group
-            sort_at(data, [g, g + 1, g + 2, g + 3, g + 4], is_less);
-            (g + 2, !is_less(&data[g], &data[g + 4]))
-        }
-        // For larger slices, a similar technique is used, but with randomly sampled elements and
-        // larger group sizes.
-        len if len < 4096 => select_pivot_randomized::<5, _, _>(data, index, is_less, rng),
-        len if len < 65536 => select_pivot_randomized::<9, _, _>(data, index, is_less, rng),
-        _ => select_pivot_randomized::<21, _, _>(data, index, is_less, rng),
+        // For larger slices, select `N` depending on the slice length, sort N groups of N elements,
+        // select group based on the index, sort the group and return the position of the
+        // middle element.
+        len if len < 512 => randomize_pivot::<3, _, _>(data, index, is_less, rng),
+        len if len < 2048 => randomize_pivot::<5, _, _>(data, index, is_less, rng),
+        len if len < 8192 => randomize_pivot::<7, _, _>(data, index, is_less, rng),
+        len if len < 65536 => randomize_pivot::<11, _, _>(data, index, is_less, rng),
+        len if len < 1048576 => randomize_pivot::<21, _, _>(data, index, is_less, rng),
+        _ => randomize_pivot::<31, _, _>(data, index, is_less, rng),
     }
 }
 
 #[inline]
-/// Selects a pivot for the given index. First, puts a `N * N` random sample to the beginning
-/// of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements apart.
-/// Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is the
-/// index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
+/// Chooses a randomized pivot for the given index. First, puts a `N * N` random sample to the
+/// beginning of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements
+/// apart. Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is
+/// the index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
 /// equal.
-fn select_pivot_randomized<const N: usize, T, F>(
+fn randomize_pivot<const N: usize, T, F>(
     data: &mut [T],
     index: usize,
     is_less: &mut F,
