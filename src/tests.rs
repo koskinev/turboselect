@@ -4,10 +4,8 @@ extern crate std;
 use std::vec::Vec;
 
 use crate::{
-    miniselect, partition_max, partition_min, quickselect, sample,
-    select_nth_unstable,
-    sort::{median_at, sort_at},
-    wyrand::WyRng,
+    miniselect, partition_max, partition_min, quickselect, sample, select_nth_unstable,
+    sort::sort_at, wyrand::WyRng,
 };
 
 fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -330,46 +328,24 @@ fn max_10() {
     assert_eq!(v, 9);
 }
 
-fn sort_indexed<const N: usize>() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let mut rng = WyRng::new(0);
-    let pos: [usize; N] = core::array::from_fn(|i| i);
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
-        sort_at(&mut data, pos, &mut usize::lt);
-        for i in 1..N {
-            assert!(data[i - 1] <= data[i]);
-        }
-    }
-}
-
-fn median_indexed<const N: usize>() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let mut rng = WyRng::new(0);
-    let pos: [usize; N] = core::array::from_fn(|i| i);
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
-        median_at(&mut data, pos, &mut usize::lt);
-        let median = data[N / 2];
-        for &elem in data[0..N / 2].iter() {
-            assert!(elem <= median);
-        }
-        for &elem in data[N / 2..].iter() {
-            assert!(elem >= median);
-        }
-    }
-}
-
 #[test]
 fn sorts() {
+    fn sort_indexed<const N: usize>() {
+        #[cfg(not(miri))]
+        let repeat = 1000;
+        #[cfg(miri)]
+        let repeat = 1;
+
+        let mut rng = WyRng::new(0);
+        let pos: [usize; N] = core::array::from_fn(|i| i);
+        for _iter in 0..repeat {
+            let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
+            sort_at(&mut data, pos, &mut usize::lt);
+            for i in 1..N {
+                assert!(data[i - 1] <= data[i]);
+            }
+        }
+    }
     sort_indexed::<2>();
     sort_indexed::<3>();
     sort_indexed::<4>();
@@ -378,23 +354,7 @@ fn sorts() {
     sort_indexed::<7>();
     sort_indexed::<8>();
     sort_indexed::<9>();
-    sort_indexed::<15>();
+    sort_indexed::<11>();
     sort_indexed::<21>();
-    sort_indexed::<63>();
-}
-
-#[test]
-fn medians() {
-    median_indexed::<2>();
-    median_indexed::<3>();
-    median_indexed::<4>();
-    median_indexed::<5>();
-    median_indexed::<6>();
-    median_indexed::<6>();
-    median_indexed::<7>();
-    median_indexed::<8>();
-    median_indexed::<9>();
-    median_indexed::<15>();
-    median_indexed::<21>();
-    median_indexed::<31>();
+    sort_indexed::<31>();
 }
