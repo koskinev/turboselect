@@ -1,12 +1,9 @@
 #[cfg(feature = "std")]
 extern crate std;
 
-use std::{eprint, eprintln, format, vec::Vec};
+use std::{eprintln, format, vec::Vec};
 
-use crate::{miniselect, partition_in_blocks, quickselect, wyrand::WyRng};
-
-const MILLION: u128 = 1_000_000;
-const BILLION: u128 = 1_000_000_000;
+use crate::{miniselect, select_nth_unstable, wyrand::WyRng};
 
 /// Returns a random boolean vector with `count` elements.
 fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
@@ -65,6 +62,19 @@ struct Durations {
     baseline: Vec<u128>,
 }
 
+impl Durations {
+    const BILLION: u128 = 1_000_000_000;
+    const MILLION: u128 = 1_000_000;
+
+    fn throughputs(&self, len: usize) -> (f64, f64) {
+        let our_througput = ((len * self.ours.len()) as f64)
+            / ((Self::MILLION * self.ours.iter().sum::<u128>()) as f64 / Self::BILLION as f64);
+        let baseline_througput = ((len * self.baseline.len()) as f64)
+            / ((Self::MILLION * self.baseline.iter().sum::<u128>()) as f64 / Self::BILLION as f64);
+        (our_througput, baseline_througput)
+    }
+}
+
 /// Runs `func` and `baseline` repeatedly with data prepared by `prep` until `func` has run for at
 /// least `runs` times. Prints the number of runs, the total time, and the average, minimum,
 /// and maximum times for each closure. Also prints the throughput of `func` relative to `baseline`.
@@ -103,81 +113,9 @@ fn bench<D, P: FnMut() -> D, T: FnMut(&mut D), B: FnMut(&mut D), C: FnMut(D) -> 
 
 #[test]
 #[ignore]
-fn quickselect_perf() {
-    // cargo test -r quickselect_perf -- --nocapture --ignored
-    // cargo flamegraph --unit-test -- quickselect_perf --ignored
-
-    eprintln!(
-        "Comparing quickselect with custom pivot selection to core::slice::select_nth_unstable."
-    );
-    eprintln!("The tests and the baseline runs are randomly interleaved. Data preparation is ignored in the timing.\n");
-
-    eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
-    eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
-
-    fn run<P, T>(label: &str, mut prep: P)
-    where
-        P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
-        T: Ord,
-    {
-        let lens = [1_000, 10_000 /* 1_000_000, 100_000_000 */];
-        let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
-        let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
-        let runs = |len: usize| 1_000_000 / ((len as f32).sqrt() as usize);
-
-        let mut rng_a = WyRng::new(123456789);
-        let mut rng_b = WyRng::new(987654321);
-
-        let mut compare = |len, index| {
-            bench(
-                || prep(len, rng_a.as_mut()),
-                |data| {
-                    quickselect(data.as_mut_slice(), index, &mut T::lt, rng_b.as_mut());
-                },
-                |data| {
-                    data.select_nth_unstable(index);
-                },
-                |data| {
-                    let nth = &data[index];
-                    data[..index].iter().all(|x| x <= nth) && data[index..].iter().all(|x| x >= nth)
-                },
-                runs(len),
-            )
-        };
-
-        const MILLION: u128 = 1_000_000;
-        for len in lens {
-            for p in percentiles {
-                let index = percentile(len, p);
-                let durations = compare(len, index);
-                let our_runs = durations.ours.len();
-                let baseline_runs = durations.baseline.len();
-                let our_time = durations.ours.iter().sum::<u128>();
-                let baseline_time = durations.baseline.iter().sum::<u128>();
-                let throughput =
-                    (len * our_runs) as f64 / ((MILLION * our_time) as f64 / BILLION as f64);
-                let baseline = (len * baseline_runs) as f64
-                    / ((MILLION * baseline_time) as f64 / BILLION as f64);
-                let ratio = throughput / baseline;
-                eprintln!(
-                    "| {label:<18} | {len:<12} | {index:<11} | {throughput:<20.03} | {baseline:<18.03} | {ratio:<5.03} |",
-                );
-            }
-        }
-    }
-
-    run("random (u32)", random_u32s);
-    run("sawtooth (u32)", sawtooth_u32s);
-    run("reversed (u32)", reversed_u32s);
-    run("random dups (u32s)", random_u32s_dups);
-    run("random (bool)", random_bools);
-}
-
-#[test]
-#[ignore]
-fn quickselect_rec_perf() {
-    // cargo test -r quickselect_rec_perf -- --nocapture --ignored
-    // cargo flamegraph --unit-test -- quickselect_rec_perf --ignored
+fn turboselect_perf() {
+    // cargo test -r turboselect_perf -- --nocapture --ignored
+    // cargo flamegraph --unit-test -- turboselect_perf --ignored
 
     fn run<P, T>(label: &str, mut prep: P)
     where
@@ -186,21 +124,17 @@ fn quickselect_rec_perf() {
     {
         use std::io::Write;
 
-        eprint!("Benchmarking {label} ..");
-
         let lens = [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
         let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
         let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
         let runs = |len: usize| 1_000_000 / ((len as f32).sqrt() as usize);
-
-        let mut rng_a = WyRng::new(123456789);
-        let mut rng_b = WyRng::new(987654321);
+        let mut rng = WyRng::new(123456789);
 
         let mut compare = |len, index| {
             bench(
-                || prep(len, rng_a.as_mut()),
+                || prep(len, rng.as_mut()),
                 |data| {
-                    quickselect(data.as_mut_slice(), index, &mut T::lt, rng_b.as_mut());
+                    select_nth_unstable(data, index);
                 },
                 |data| {
                     data.select_nth_unstable(index);
@@ -218,6 +152,12 @@ fn quickselect_rec_perf() {
             for p in percentiles {
                 let index = percentile(len, p);
                 let durations = compare(len, index);
+                let (our_tput, baseline_tput) = durations.throughputs(len);
+                let ratio = our_tput / baseline_tput;
+                eprintln!(
+                    "| {label:<18} | {len:<12} | {index:<11} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio:<5.03} |",
+                );
+
                 writeln!(results, "target,len,index,nanosecs").unwrap();
                 for duration in &durations.ours {
                     writeln!(results, "ours,{len},{index},{duration}").unwrap();
@@ -226,14 +166,17 @@ fn quickselect_rec_perf() {
                     writeln!(results, "baseline,{len},{index},{duration}").unwrap();
                 }
             }
-            eprint!(".")
         }
 
-        let mut output = std::fs::File::create(format!("{label}.csv")).unwrap();
+        let mut output = std::fs::File::create(format!("bench/results/{label}.csv")).unwrap();
         output.write_all(&results).unwrap();
-
-        eprintln!("wrote {label}.csv");
     }
+
+    eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");
+    eprintln!("Data preparation is ignored in the timing.\n");
+
+    eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
+    eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
 
     run("random_u32", random_u32s);
     run("sawtooth_u32", sawtooth_u32s);
@@ -285,17 +228,10 @@ fn miniselect_perf() {
             for p in percentiles {
                 let index = percentile(len, p);
                 let durations = compare(len, index);
-                let our_runs = durations.ours.len();
-                let baseline_runs = durations.baseline.len();
-                let our_time = durations.ours.iter().sum::<u128>();
-                let baseline_time = durations.baseline.iter().sum::<u128>();
-                let throughput =
-                    (len * our_runs) as f64 / ((MILLION * our_time) as f64 / BILLION as f64);
-                let baseline = (len * baseline_runs) as f64
-                    / ((MILLION * baseline_time) as f64 / BILLION as f64);
-                let ratio = throughput / baseline;
+                let (our_tput, baseline_tput) = durations.throughputs(len);
+                let ratio = our_tput / baseline_tput;
                 eprintln!(
-                    "| {label:<18} | {len:<12} | {index:<11} | {throughput:<20.03} | {baseline:<18.03} | {ratio:<5.03} |",
+                    "| {label:<18} | {len:<12} | {index:<11} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio:<5.03} |",
                 );
             }
         }
