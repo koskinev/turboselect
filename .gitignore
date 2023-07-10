@@ -1,5 +1,6 @@
 /.vscode
 /.ipynb_checkpoints
+/bench_results
 /target
 /Cargo.lock
 /misc
