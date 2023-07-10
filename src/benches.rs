@@ -3,10 +3,19 @@ extern crate std;
 
 use std::{eprint, eprintln, format, vec::Vec};
 
-use crate::{miniselect, quickselect, wyrand::WyRng};
+use crate::{miniselect, partition_in_blocks, quickselect, wyrand::WyRng};
 
 const MILLION: u128 = 1_000_000;
 const BILLION: u128 = 1_000_000_000;
+
+/// Returns a random boolean vector with `count` elements.
+fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
+    let mut data = Vec::with_capacity(count);
+    while data.len() < count {
+        data.push(rng.bool());
+    }
+    data
+}
 
 /// Returns a vector of `count` random `u32` values.
 fn random_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
@@ -46,15 +55,6 @@ fn sawtooth_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
     for index in 0..count {
         let x = index % length;
         data.push(x);
-    }
-    data
-}
-
-/// Returns a random boolean vector with `count` elements.
-fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
-    let mut data = Vec::with_capacity(count);
-    while data.len() < count {
-        data.push(rng.bool());
     }
     data
 }
@@ -121,13 +121,9 @@ fn quickselect_perf() {
         T: Ord,
     {
         let lens = [1_000, 10_000 /* 1_000_000, 100_000_000 */];
+        let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
+        let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
         let runs = |len: usize| 1_000_000 / ((len as f32).sqrt() as usize);
-        let p001 = |len: usize| len / 1000;
-        let p01 = |len: usize| len / 100;
-        let p05 = |len: usize| len / 20;
-        let p25 = |len: usize| len / 4;
-        let p50 = |len: usize| len / 2;
-        let percentiles = [p001, p01, p05, p25, p50];
 
         let mut rng_a = WyRng::new(123456789);
         let mut rng_b = WyRng::new(987654321);
@@ -152,7 +148,7 @@ fn quickselect_perf() {
         const MILLION: u128 = 1_000_000;
         for len in lens {
             for p in percentiles {
-                let index = p(len);
+                let index = percentile(len, p);
                 let durations = compare(len, index);
                 let our_runs = durations.ours.len();
                 let baseline_runs = durations.baseline.len();
@@ -193,13 +189,9 @@ fn quickselect_rec_perf() {
         eprint!("Benchmarking {label} ..");
 
         let lens = [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
+        let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
+        let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
         let runs = |len: usize| 1_000_000 / ((len as f32).sqrt() as usize);
-        let p001 = |len: usize| len / 1000;
-        let p01 = |len: usize| len / 100;
-        let p05 = |len: usize| len / 20;
-        let p25 = |len: usize| len / 4;
-        let p50 = |len: usize| len / 2;
-        let percentiles = [p001, p01, p05, p25, p50];
 
         let mut rng_a = WyRng::new(123456789);
         let mut rng_b = WyRng::new(987654321);
@@ -224,7 +216,7 @@ fn quickselect_rec_perf() {
         let mut results = Vec::new();
         for len in lens {
             for p in percentiles {
-                let index = p(len);
+                let index = percentile(len, p);
                 let durations = compare(len, index);
                 writeln!(results, "target,len,index,nanosecs").unwrap();
                 for duration in &durations.ours {
@@ -256,7 +248,6 @@ fn miniselect_perf() {
     // cargo test -r miniselect_perf -- --nocapture --ignored
     // cargo flamegraph --unit-test -- miniselect_perf --ignored
 
-
     eprintln!("Comparing Wirth selection with core::slice::select_nth_unstable.");
     eprintln!("The tests and the baseline runs are randomly interleaved. Data preparation is ignored in the timing.\n");
 
@@ -269,13 +260,8 @@ fn miniselect_perf() {
         T: Ord,
     {
         let lens = [8, 12, 16, 24];
-        let p05 = |count: usize| count / 20;
-        let p25 = |count: usize| count / 4;
-        let p50 = |count: usize| count / 2;
-        let p75 = |count: usize| count * 3 / 4;
-        let p95 = |count: usize| count * 19 / 20;
-        let percentiles = [p05, p25, p50, p75, p95];
-
+        let percentiles = [0.05, 0.25, 0.5, 0.27, 0.95];
+        let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
         let mut rng = WyRng::new(123456789);
 
         let mut compare = |count, index| {
@@ -295,10 +281,9 @@ fn miniselect_perf() {
             )
         };
 
-
         for len in lens {
             for p in percentiles {
-                let index = p(len);
+                let index = percentile(len, p);
                 let durations = compare(len, index);
                 let our_runs = durations.ours.len();
                 let baseline_runs = durations.baseline.len();

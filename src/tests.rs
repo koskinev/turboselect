@@ -4,7 +4,7 @@ extern crate std;
 use std::vec::Vec;
 
 use crate::{
-    miniselect, partition_in_blocks_dual, partition_max, partition_min, quickselect, sample,
+    miniselect, partition_max, partition_min, quickselect, sample,
     select_nth_unstable,
     sort::{median_at, sort_at},
     wyrand::WyRng,
@@ -19,33 +19,6 @@ fn shuffle<T>(data: &mut [T], rng: &mut WyRng) {
     for i in 0..len - 1 {
         let j = rng.bounded_usize(i, len);
         data.swap(i, j);
-    }
-}
-
-#[test]
-fn block_dual() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-
-    #[cfg(miri)]
-    let repeat = 10;
-
-    let max_count = 1000;
-    let mut rng = WyRng::new(123);
-
-    for _iter in 0..repeat {
-        let count = rng.bounded_usize(1, max_count);
-        let mut data: Vec<_> = iter_rng(&mut rng, count, count).collect();
-
-        let x = rng.bounded_usize(0, count);
-        let y = rng.bounded_usize(0, count);
-
-        let (low, high) = if x < y { (&x, &y) } else { (&y, &x) };
-        let (u, v) = partition_in_blocks_dual(data.as_mut_slice(), low, high, &mut usize::lt);
-
-        assert!(data[..u].iter().all(|elem| elem < low));
-        assert!(data[u..v].iter().all(|elem| low <= elem && elem <= high));
-        assert!(data[v..].iter().all(|elem| elem > high));
     }
 }
 
