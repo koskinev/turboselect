@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// A pseudorandom number generator that uses the WyRand algorithm.
 pub struct WyRng {
     /// The current state of the RNG.
