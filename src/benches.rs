@@ -3,7 +3,7 @@ extern crate std;
 
 use std::{eprintln, format, vec::Vec};
 
-use crate::{miniselect, select_nth_unstable, wyrand::WyRng};
+use crate::{select_nth_unstable, wyrand::WyRng};
 
 /// Returns a random boolean vector with `count` elements.
 fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
@@ -124,7 +124,9 @@ fn turboselect_perf() {
     {
         use std::io::Write;
 
-        let lens = [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
+        let lens = [
+            1_000, 10_000, 100_000, // 1_000_000, 10_000_000, 100_000_000
+        ];
         let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
         let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
         let runs = |len: usize| 1_000_000 / ((len as f32).sqrt() as usize);
@@ -147,9 +149,10 @@ fn turboselect_perf() {
             )
         };
 
-        let mut results = Vec::new();
+        let mut output = std::fs::File::create(format!("bench_results/{label}.csv")).unwrap();
         for len in lens {
             for p in percentiles {
+                let mut results = Vec::new();
                 let index = percentile(len, p);
                 let durations = compare(len, index);
                 let (our_tput, baseline_tput) = durations.throughputs(len);
@@ -165,11 +168,9 @@ fn turboselect_perf() {
                 for duration in &durations.baseline {
                     writeln!(results, "baseline,{len},{index},{duration}").unwrap();
                 }
+                output.write_all(&results).unwrap();
             }
         }
-
-        let mut output = std::fs::File::create(format!("bench/results/{label}.csv")).unwrap();
-        output.write_all(&results).unwrap();
     }
 
     eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");
@@ -183,63 +184,4 @@ fn turboselect_perf() {
     run("reversed_u32", reversed_u32s);
     run("randomdups_u32", random_u32s_dups);
     run("random_bool", random_bools);
-}
-
-#[test]
-#[ignore]
-fn miniselect_perf() {
-    // cargo test -r miniselect_perf -- --nocapture --ignored
-    // cargo flamegraph --unit-test -- miniselect_perf --ignored
-
-    eprintln!("Comparing Wirth selection with core::slice::select_nth_unstable.");
-    eprintln!("The tests and the baseline runs are randomly interleaved. Data preparation is ignored in the timing.\n");
-
-    eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
-    eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
-
-    fn run<P, T>(label: &str, mut prep: P)
-    where
-        P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
-        T: Ord,
-    {
-        let lens = [8, 12, 16, 24];
-        let percentiles = [0.05, 0.25, 0.5, 0.27, 0.95];
-        let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
-        let mut rng = WyRng::new(123456789);
-
-        let mut compare = |count, index| {
-            bench(
-                || prep(count, rng.as_mut()),
-                |data| {
-                    miniselect(data, index, &mut T::lt);
-                },
-                |data| {
-                    data.select_nth_unstable(index);
-                },
-                |data| {
-                    let nth = &data[index];
-                    data[..index].iter().all(|x| x <= nth) && data[index..].iter().all(|x| x >= nth)
-                },
-                100_000,
-            )
-        };
-
-        for len in lens {
-            for p in percentiles {
-                let index = percentile(len, p);
-                let durations = compare(len, index);
-                let (our_tput, baseline_tput) = durations.throughputs(len);
-                let ratio = our_tput / baseline_tput;
-                eprintln!(
-                    "| {label:<18} | {len:<12} | {index:<11} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio:<5.03} |",
-                );
-            }
-        }
-    }
-
-    run("random (u32)", random_u32s);
-    run("sawtooth (u32)", sawtooth_u32s);
-    run("reversed (u32)", reversed_u32s);
-    run("random dups (u32s)", random_u32s_dups);
-    run("random (bool)", random_bools);
 }

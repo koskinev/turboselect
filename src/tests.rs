@@ -4,8 +4,8 @@ extern crate std;
 use std::vec::Vec;
 
 use crate::{
-    miniselect, partition_max, partition_min, quickselect, sample, select_nth_unstable,
-    sort::sort_at, wyrand::WyRng,
+    partition_max, partition_min, quickselect, sample, select_nth_unstable, sort::sort_at,
+    wyrand::WyRng,
 };
 
 fn iter_rng(rng: &mut WyRng, count: usize, high: usize) -> impl Iterator<Item = usize> + '_ {
@@ -213,29 +213,6 @@ fn nth_small() {
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
         quickselect(&mut data, index, &mut usize::lt, &mut rng);
-        let nth = data[index];
-        assert!(data[..index].iter().all(|elem| elem <= &nth));
-        assert!(data[index..].iter().all(|elem| elem >= &nth));
-    }
-}
-
-#[test]
-fn nth_mini() {
-    #[cfg(not(miri))]
-    let repeat = 1000;
-    #[cfg(miri)]
-    let repeat = 1;
-
-    let max = 100;
-    let mut rng = WyRng::new(123);
-
-    for _iter in 0..repeat {
-        let count = rng.bounded_usize(1, max);
-        let high = rng.bounded_usize(0, count);
-
-        let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
-        let index = rng.bounded_usize(0, count);
-        miniselect(data.as_mut_slice(), index, &mut usize::lt);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));

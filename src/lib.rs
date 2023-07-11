@@ -51,91 +51,13 @@ impl<T> Drop for Elem<T> {
 }
 
 impl<T> Elem<T> {
-    /// Creates a new `Elem` from a mutable reference. This method can be safely used only if the
-    /// caller ensures that the reference is not used for the duration of the `Elem`'s lifetime.
+    /// Creates a new `Elem` from a mutable reference. This method can be safely used only if `src`
+    /// is not used for the duration of the `Elem`'s lifetime.
     unsafe fn new(src: *mut T) -> Self {
         Self {
             value: ManuallyDrop::new(ptr::read(src)),
             dst: src,
         }
-    }
-}
-
-///
-fn miniselect<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    if index == 0 {
-        select_min(data, is_less)
-    } else if index == data.len() - 1 {
-        select_max(data, is_less)
-    } else {
-        match data.len() {
-            len if len < 9 => tinysort(data, is_less),
-            _ => {
-                sort_at(data, [0, 1, 2, 3, 4], is_less);
-                data.swap(index, 2);
-                let mut l = data.as_mut_ptr();
-                let (mut r, k) = unsafe { (l.add(data.len() - 1), l.add(index)) };
-                while l < r {
-                    let mut p = l;
-                    let mut q = r;
-                    if p == k {
-                        let mut min = k;
-                        while q > k {
-                            unsafe {
-                                if is_less(&*q, &*min) {
-                                    min = q;
-                                }
-                                q = q.sub(1);
-                            }
-                        }
-                        unsafe { k.swap(min) };
-                        break;
-                    }
-                    if k == q {
-                        let mut max = k;
-                        while p < k {
-                            unsafe {
-                                if is_less(&*max, &*p) {
-                                    max = p;
-                                }
-                                p = p.add(1);
-                            }
-                        }
-                        unsafe { k.swap(max) };
-                        break;
-                    }
-                    unsafe {
-                        let x = ManuallyDrop::new(ptr::read(k));
-                        loop {
-                            while is_less(&*p, &x) {
-                                p = p.add(1);
-                            }
-                            while is_less(&x, &*q) {
-                                q = q.sub(1);
-                            }
-                            if p <= q {
-                                p.swap(q);
-                                p = p.add(1);
-                                q = q.sub(1);
-                            }
-                            if p > q {
-                                break;
-                            }
-                        }
-                    }
-                    if q < k {
-                        l = p;
-                    }
-                    if k < p {
-                        r = q;
-                    }
-                }
-            }
-        }
-        (index, index)
     }
 }
 
@@ -259,14 +181,6 @@ where
 
     // FIXME: When we get VLAs, try creating one array of length `min(v.len(), 2 * BLOCK)` rather
     // than two fixed-size arrays of length `BLOCK`. VLAs might be more cache-efficient.
-
-    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
-    fn width<T>(l: *mut T, r: *mut T) -> usize {
-        assert!(core::mem::size_of::<T>() > 0);
-        // FIXME: this should *likely* use `offset_from`, but more
-        // investigation is needed (including running tests in miri).
-        unsafe { r.offset_from(l) as usize }
-    }
 
     loop {
         // We are done with partitioning block-by-block when `l` and `r` get very close. Then we do
@@ -533,24 +447,16 @@ where
     // Copy the initial minimum to the stack
     let (head, tail) = data.split_first_mut().unwrap();
     let mut min = unsafe { Elem::new(head) };
-    let mut dups = 0;
 
     let Range { start: l, end: r } = tail.as_mut_ptr_range();
     let mut elem = l;
+    let mut dup = l;
 
     // Setup the offsets array.
     const BLOCK: usize = 64;
     let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
     let mut start = offsets.as_mut_ptr().cast();
     let mut end: *mut u8 = start;
-
-    // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
-    fn width<T>(l: *mut T, r: *mut T) -> usize {
-        assert!(core::mem::size_of::<T>() > 0);
-        // FIXME: this should *likely* use `offset_from`, but more
-        // investigation is needed (including running tests in miri).
-        unsafe { r.offset_from(l) as usize }
-    }
 
     while elem < r {
         // Scan the next block.
@@ -564,17 +470,17 @@ where
             }
             // Scan the found elements
             for _ in 0..width(start, end) {
-                let offset = start.read() as usize;
-                if is_less(&*elem.add(offset), &*min) {
+                let next = elem.add(*start as usize);
+                if is_less(&*next, &*min) {
                     // We found a new minimum.
-                    dups = 0;
-                    ptr::swap_nonoverlapping(elem.add(offset), &mut *min, 1);
-                } else if !is_less(&*min, &*elem.add(offset)) {
+                    dup = l;
+                    ptr::swap_nonoverlapping(next, &mut *min, 1);
+                } else if !is_less(&*min, &*next) {
                     // We found an element equal to the minimum.
-                    if dups < elem.add(offset).offset_from(l) as usize {
-                        ptr::swap_nonoverlapping(elem.add(offset), l.add(dups), 1);
+                    if width(l, dup) < width(l, next) {
+                        ptr::swap_nonoverlapping(next, dup, 1);
                     }
-                    dups += 1;
+                    dup = dup.add(1);
                 }
                 start = start.add(1);
             }
@@ -583,7 +489,7 @@ where
             end = start;
         }
     }
-    (0, dups)
+    (0, width(l, dup))
 }
 
 /// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
@@ -602,7 +508,7 @@ where
     assert!(index < data.len());
     let mut offset = 0;
     let mut was = None;
-    while data.len() > 24 {
+    while data.len() > 8 {
         let (u, v) = match index {
             0 => partition_min(data, 0, is_less),
             i if i == data.len() - 1 => partition_max(data, 0, is_less),
@@ -640,7 +546,7 @@ where
             return (offset + u, offset + v);
         }
     }
-    miniselect(data, index, is_less);
+    tinysort(data, is_less);
     let u = index + offset;
     (u, u)
 }
@@ -679,7 +585,7 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
     }
 }
 
-fn select_min<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+fn select_min<T, F>(data: &mut [T], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -691,23 +597,20 @@ where
         .min_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
         .unwrap();
     data.swap(0, min);
-    (0, 0)
 }
 
-fn select_max<T, F>(data: &mut [T], is_less: &mut F) -> (usize, usize)
+fn select_max<T, F>(data: &mut [T], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
     use core::cmp::Ordering::{Greater, Less};
 
-    let last = data.len() - 1;
     let (max, _) = data
         .iter()
         .enumerate()
         .max_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
         .unwrap();
-    data.swap(max, last);
-    (last, last)
+    data.swap(max, data.len() - 1);
 }
 
 /// Reorder the slice such that the element at `index` is at its final sorted position.
@@ -789,14 +692,15 @@ where
 {
     match data.len() {
         // If the slice is small, select the pivot as median of five elements.
-        len if len < 32 => {
-            sort_at(data, [0, len / 4, len / 2, 3 * len / 4, len - 1], is_less);
-            (len / 2, !is_less(&data[0], &data[len / 2]))
-        }
+        // len if len < 32 => {
+        //     sort_at(data, [0, len / 4, len / 2, 3 * len / 4, len - 1], is_less);
+        //     (len / 2, !is_less(&data[0], &data[len / 2]))
+        // }
         // For larger slices, select `N` depending on the slice length, sort N groups of N elements,
         // select group based on the index, sort the group and return the position of the
         // middle element.
-        len if len < 512 => randomize_pivot::<3, _, _>(data, index, is_less, rng),
+        // len if len < 32 => randomize_pivot::<3, _, _>(data, index, is_less, rng),
+        len if len < 256 => randomize_pivot::<3, _, _>(data, index, is_less, rng),
         len if len < 2048 => randomize_pivot::<5, _, _>(data, index, is_less, rng),
         len if len < 8192 => randomize_pivot::<7, _, _>(data, index, is_less, rng),
         len if len < 65536 => randomize_pivot::<11, _, _>(data, index, is_less, rng),
@@ -830,4 +734,10 @@ where
     let pos: [_; N] = core::array::from_fn(|i| g + i);
     sort_at(sample, pos, is_less);
     (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
+}
+
+// Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
+fn width<T>(l: *mut T, r: *mut T) -> usize {
+    assert!(core::mem::size_of::<T>() > 0);
+    unsafe { r.offset_from(l).max(0) as usize }
 }
