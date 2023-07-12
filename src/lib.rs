@@ -513,7 +513,7 @@ where
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
 /// Panics if `index >= data.len()`.
-fn quickselect<T>(mut data: &mut [T], mut index: usize, rng: &mut WyRng) -> (usize, usize)
+fn turboselect<T>(mut data: &mut [T], mut index: usize, rng: &mut WyRng) -> (usize, usize)
 where
     T: Ord,
 {
@@ -692,7 +692,7 @@ where
     } else if index == data.len() - 1 {
         select_max(data, &mut T::lt);
     } else {
-        quickselect(data, index, rng.as_mut());
+        turboselect(data, index, rng.as_mut());
     }
     let (left, rest) = data.split_at_mut(index);
     let (pivot, right) = rest.split_first_mut().unwrap();

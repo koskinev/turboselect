@@ -4,7 +4,7 @@ extern crate std;
 use std::vec::Vec;
 
 use crate::{
-    partition_max, partition_min, quickselect, sample, select_nth_unstable, sort::sort_at,
+    partition_max, partition_min, turboselect, sample, select_nth_unstable, sort::sort_at,
     wyrand::WyRng,
 };
 
@@ -186,7 +186,7 @@ fn nth() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        quickselect(&mut data, index, rng.as_mut());
+        turboselect(&mut data, index, rng.as_mut());
         let nth = &data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
             i if i < index && elem > nth => panic!("{} > {} at {}", elem, nth, i),
@@ -212,7 +212,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        quickselect(&mut data, index, &mut rng);
+        turboselect(&mut data, index, &mut rng);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
