@@ -4,7 +4,7 @@ extern crate std;
 use std::vec::Vec;
 
 use crate::{
-    partition_max, partition_min, turboselect, sample, select_nth_unstable, sort::sort_at,
+    partition_equal_max, partition_equal_min, turboselect, sample, select_nth_unstable, sort::sort_at,
     wyrand::WyRng,
 };
 
@@ -252,7 +252,7 @@ fn min_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (_u, v) = partition_min(data.as_mut_slice(), 0);
+        let (_u, v) = partition_equal_min(data.as_mut_slice(), 0);
         let min = &data[0];
         for (i, elem) in data.iter().enumerate() {
             if i <= v {
@@ -267,7 +267,7 @@ fn min_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_min(data.as_mut_slice(), 0);
+    let (u, v) = partition_equal_min(data.as_mut_slice(), 0);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
@@ -285,7 +285,7 @@ fn max_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (u, _v) = partition_max(data.as_mut_slice(), 0);
+        let (u, _v) = partition_equal_max(data.as_mut_slice(), 0);
         let max = &data[u];
         for (i, elem) in data.iter().enumerate() {
             if i >= u {
@@ -300,7 +300,7 @@ fn max_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_max(data.as_mut_slice(), 0);
+    let (u, v) = partition_equal_max(data.as_mut_slice(), 0);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
