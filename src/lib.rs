@@ -11,7 +11,9 @@ mod tests;
 mod wyrand;
 
 use core::{
-    mem::{ManuallyDrop, MaybeUninit},
+    array,
+    cmp::{self, Ordering},
+    mem::{self, ManuallyDrop, MaybeUninit},
     ops::{Deref, DerefMut, Range},
     ptr,
 };
@@ -75,15 +77,16 @@ impl<T> Elem<T> {
 /// ```
 ///
 /// Panics if `index` is out of bounds.
-fn partition_at<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
+fn partition_at<T>(data: &mut [T], index: usize) -> (usize, usize)
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
     // This ensures that the index is in bounds.
     data.swap(0, index);
 
     let (head, tail) = data.split_first_mut().unwrap();
-    let u = {
+    let (u, mut v);
+    {
         // Read the pivot into the stack. The read below is safe, because the pivot is the first
         // element in the slice.
         let pivot = unsafe { Elem::new(head) };
@@ -93,17 +96,21 @@ where
         unsafe {
             // The calls to get_unchecked are safe, because the slice is non-empty and we ensure l
             // <= r.
-            while l < r && is_less(tail.get_unchecked(l), &*pivot) {
+            while l < r && tail.get_unchecked(l) < &*pivot {
                 l += 1;
             }
-            while l < r && !is_less(tail.get_unchecked(r - 1), &*pivot) {
+            while l < r && tail.get_unchecked(r - 1) >= &*pivot {
                 r -= 1;
             }
         }
-        l + partition_in_blocks(&mut tail[l..r], &*pivot, is_less)
-    };
+        u = l + partition_in_blocks(&mut tail[l..r], &*pivot);
+        v = u;
+        while v < tail.len() && unsafe { tail.get_unchecked(v) } == &*pivot {
+            v += 1;
+        }
+    }
     data.swap(0, u);
-    (u, u)
+    (u, v)
 }
 
 /// Partitions `data` into three parts using the element at `index` as the pivot.
@@ -122,13 +129,13 @@ where
 /// ```
 ///
 /// Panics if `index` is out of bounds.
-fn partition_equal<T, F>(data: &mut [T], index: usize, is_less: &mut F) -> (usize, usize)
+fn partition_equal<T>(data: &mut [T], index: usize) -> (usize, usize)
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
-    let u = partition_at(data, index, is_less).0;
-    let dups = partition_min(data[u..].as_mut(), 0, is_less).1;
-    (u, u + dups)
+    let (u, v) = partition_at(data, index);
+    let dups = partition_min(data[v..].as_mut(), 0).1;
+    (u, v + dups)
 }
 
 /// Partitions `data` into elements smaller than `pivot`, followed by elements greater than or equal
@@ -140,9 +147,9 @@ where
 /// This idea is presented in the [BlockQuicksort][pdf] paper.
 ///
 /// [pdf]: https://drops.dagstuhl.de/opus/volltexte/2016/6389/pdf/LIPIcs-ESA-2016-38.pdf
-fn partition_in_blocks<T, F>(data: &mut [T], pivot: &T, is_less: &mut F) -> usize
+fn partition_in_blocks<T>(data: &mut [T], pivot: &T) -> usize
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
     // Number of elements in a typical block.
     const BLOCK: usize = 128;
@@ -236,7 +243,7 @@ where
                 unsafe {
                     // Branchless comparison.
                     *end_l = i as u8;
-                    end_l = end_l.add(!is_less(&*elem, pivot) as usize);
+                    end_l = end_l.add((&*elem >= pivot) as usize);
                     elem = elem.add(1);
                 }
             }
@@ -270,13 +277,13 @@ where
                     // Branchless comparison.
                     elem = elem.sub(1);
                     *end_r = i as u8;
-                    end_r = end_r.add(is_less(&*elem, pivot) as usize);
+                    end_r = end_r.add((&*elem < pivot) as usize);
                 }
             }
         }
 
         // Number of out-of-order elements to swap between the left and right side.
-        let count = core::cmp::min(width(start_l, end_l), width(start_r, end_r));
+        let count = cmp::min(width(start_l, end_l), width(start_r, end_r));
 
         if count > 0 {
             if count < BLOCK {
@@ -414,35 +421,41 @@ where
 /// Puts the maximum elements at the end of the slice and returns the indices of the first and
 /// last elements equal to the maximum. The `init` argument is the index of the element to use as
 /// the initial maximum.
-fn partition_max<T, F>(data: &mut [T], init: usize, is_less: &mut F) -> (usize, usize)
+fn partition_max<T>(data: &mut [T], init: usize) -> (usize, usize)
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
-    let (_, v) = partition_min(data, init, &mut |x, y| is_less(y, x));
-    let len = data.len();
+    // SAFETY: `Reverse` has the same memory layout as `T`, so we can safely cast the slice to
+    // `&mut [Reverse<T>]`.
+    let rev: &mut [cmp::Reverse<T>] = unsafe { &mut *(data as *mut [T] as *mut [cmp::Reverse<T>]) };
+
+    let len = rev.len();
+    let (_, v) = partition_min(rev, init);
     let count = (v + 1).min(len - v - 1);
-    let (head, tail) = data.split_at_mut(len - count);
-    unsafe { ptr::swap_nonoverlapping(tail.as_mut_ptr(), head.as_mut_ptr(), count) };
+
+    let (head, right) = data.split_at_mut(len - count);
+    let (left, _) = head.split_at_mut(count);
+    left.swap_with_slice(right);
     (len - v - 1, len - 1)
 }
 
 /// Puts the minimum elements at the beginning of the slice and returns the indices of the first and
 /// last elements equal to the minimum. The `init` argument is the index of the element to use as
 /// the initial minimum.
-fn partition_min<T, F>(data: &mut [T], init: usize, is_less: &mut F) -> (usize, usize)
+fn partition_min<T>(data: &mut [T], init: usize) -> (usize, usize)
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
-    // If there is only one element, it is the minimum.
+    // If there is only on element, it is the minimum.
     if data.len() < 2 {
         return (0, data.len() - 1);
     }
 
     // Initialize the minimum by scanning some elements.
     data.swap(0, init);
-    sort_at(data, [0, data.len() - 1], is_less);
-    sort_at(data, [0, data.len() / 2], is_less);
-    sort_at(data, [0, data.len() / 3], is_less);
+    sort_at(data, [0, data.len() - 1]);
+    sort_at(data, [0, data.len() / 2]);
+    sort_at(data, [0, 1]);
 
     // Copy the initial minimum to the stack
     let (head, tail) = data.split_first_mut().unwrap();
@@ -460,27 +473,31 @@ where
 
     while elem < r {
         // Scan the next block.
-        let block = core::cmp::min(BLOCK, width(elem, r));
+        let block = cmp::min(BLOCK, width(elem, r));
         unsafe {
-            // Scan the block and store offsets to the elements less than or equal <= minimum.
+            // Scan the block and store offsets to the elements that satisfy `elem <= minimum`.
             for offset in 0..block {
                 end.write(offset as u8);
-                let is_le = !is_less(&*min, &*elem.add(offset));
+                let is_le = *elem.add(offset) <= *min;
                 end = end.add(is_le as usize);
             }
             // Scan the found elements
             for _ in 0..width(start, end) {
                 let next = elem.add(*start as usize);
-                if is_less(&*next, &*min) {
-                    // We found a new minimum.
-                    dup = l;
-                    ptr::swap_nonoverlapping(next, &mut *min, 1);
-                } else if !is_less(&*min, &*next) {
-                    // We found an element equal to the minimum.
-                    if width(l, dup) < width(l, next) {
-                        ptr::swap_nonoverlapping(next, dup, 1);
+                match (*next).cmp(&*min) {
+                    Ordering::Less => {
+                        // We found a new minimum.
+                        dup = l;
+                        ptr::swap_nonoverlapping(next, &mut *min, 1);
                     }
-                    dup = dup.add(1);
+                    Ordering::Equal => {
+                        // We found an element equal to the minimum.
+                        if width(l, dup) < width(l, next) {
+                            ptr::swap_nonoverlapping(next, dup, 1);
+                        }
+                        dup = dup.add(1);
+                    }
+                    _ => {}
                 }
                 start = start.add(1);
             }
@@ -496,36 +513,31 @@ where
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
 /// Panics if `index >= data.len()`.
-fn quickselect<T, F>(
-    mut data: &mut [T],
-    mut index: usize,
-    is_less: &mut F,
-    rng: &mut WyRng,
-) -> (usize, usize)
+fn quickselect<T>(mut data: &mut [T], mut index: usize, rng: &mut WyRng) -> (usize, usize)
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
     assert!(index < data.len());
     let mut offset = 0;
     let mut was = None;
     while data.len() > 8 {
         let (u, v) = match index {
-            0 => partition_min(data, 0, is_less),
-            i if i == data.len() - 1 => partition_max(data, 0, is_less),
+            0 => partition_min(data, 0),
+            i if i == data.len() - 1 => partition_max(data, 0),
             _ => {
-                let (p, all_eq) = select_pivot(data, index, is_less, rng);
+                let (p, all_eq) = select_pivot(data, index, rng);
                 match was {
                     // Test if the selected pivot is equal to a previous pivot from the left. In
                     // this case we know that the pivot is the minimum of the current slice.
-                    Some(w) if !is_less(w, &data[p]) => partition_min(data, p, is_less),
+                    Some(w) if w == &data[p] => partition_min(data, p),
 
                     // If the selected pivot is equal to it's neighbor elements, use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
-                    _ if all_eq => partition_equal(data, p, is_less),
+                    _ if all_eq => partition_equal(data, p),
 
                     // Otherwise, use the default binary partioning.
-                    _ => partition_at(data, p, is_less),
+                    _ => partition_at(data, p),
                 }
             }
         };
@@ -546,7 +558,7 @@ where
             return (offset + u, offset + v);
         }
     }
-    tinysort(data, is_less);
+    tinysort(data);
     let u = index + offset;
     (u, u)
 }
@@ -589,12 +601,16 @@ fn select_min<T, F>(data: &mut [T], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    use core::cmp::Ordering::{Greater, Less};
-
     let (min, _) = data
         .iter()
         .enumerate()
-        .min_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
+        .min_by(|&(_, x), &(_, y)| {
+            if is_less(x, y) {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        })
         .unwrap();
     data.swap(0, min);
 }
@@ -603,12 +619,16 @@ fn select_max<T, F>(data: &mut [T], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    use core::cmp::Ordering::{Greater, Less};
-
     let (max, _) = data
         .iter()
         .enumerate()
-        .max_by(|&(_, x), &(_, y)| if is_less(x, y) { Less } else { Greater })
+        .max_by(|&(_, x), &(_, y)| {
+            if is_less(x, y) {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        })
         .unwrap();
     data.swap(max, data.len() - 1);
 }
@@ -672,7 +692,7 @@ where
     } else if index == data.len() - 1 {
         select_max(data, &mut T::lt);
     } else {
-        quickselect(data, index, &mut T::lt, rng.as_mut());
+        quickselect(data, index, rng.as_mut());
     }
     let (left, rest) = data.split_at_mut(index);
     let (pivot, right) = rest.split_first_mut().unwrap();
@@ -681,14 +701,9 @@ where
 
 /// Selects the pivot element for partitioning the slice. Returns `(p, r)` where `p` is the index
 /// of the pivot element and `r` is number neighbor elements, used to test for equality.
-fn select_pivot<T, F>(
-    data: &mut [T],
-    index: usize,
-    is_less: &mut F,
-    rng: &mut WyRng,
-) -> (usize, bool)
+fn select_pivot<T>(data: &mut [T], index: usize, rng: &mut WyRng) -> (usize, bool)
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
     match data.len() {
         // If the slice is small, select the pivot as median of five elements.
@@ -700,12 +715,12 @@ where
         // select group based on the index, sort the group and return the position of the
         // middle element.
         // len if len < 32 => randomize_pivot::<3, _, _>(data, index, is_less, rng),
-        len if len < 256 => randomize_pivot::<3, _, _>(data, index, is_less, rng),
-        len if len < 2048 => randomize_pivot::<5, _, _>(data, index, is_less, rng),
-        len if len < 8192 => randomize_pivot::<7, _, _>(data, index, is_less, rng),
-        len if len < 65536 => randomize_pivot::<11, _, _>(data, index, is_less, rng),
-        len if len < 1048576 => randomize_pivot::<21, _, _>(data, index, is_less, rng),
-        _ => randomize_pivot::<31, _, _>(data, index, is_less, rng),
+        len if len < 256 => randomize_pivot::<3, _>(data, index, rng),
+        len if len < 2048 => randomize_pivot::<5, _>(data, index, rng),
+        len if len < 8192 => randomize_pivot::<7, _>(data, index, rng),
+        len if len < 65536 => randomize_pivot::<11, _>(data, index, rng),
+        len if len < 1048576 => randomize_pivot::<21, _>(data, index, rng),
+        _ => randomize_pivot::<31, _>(data, index, rng),
     }
 }
 
@@ -715,29 +730,28 @@ where
 /// apart. Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is
 /// the index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
 /// equal.
-fn randomize_pivot<const N: usize, T, F>(
+fn randomize_pivot<const N: usize, T>(
     data: &mut [T],
     index: usize,
-    is_less: &mut F,
     rng: &mut WyRng,
 ) -> (usize, bool)
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
     let len = data.len();
     let sample = sample(data, N * N, rng);
     let g = N * ((N * index) / len);
     for j in 0..N {
-        let pos: [_; N] = core::array::from_fn(|i| j + N * i);
-        sort_at(sample, pos, is_less);
+        let pos: [_; N] = array::from_fn(|i| j + N * i);
+        sort_at(sample, pos);
     }
-    let pos: [_; N] = core::array::from_fn(|i| g + i);
-    sort_at(sample, pos, is_less);
-    (g + N / 2, !is_less(&sample[g], &sample[g + N / 2]))
+    let pos: [_; N] = array::from_fn(|i| g + i);
+    sort_at(sample, pos);
+    (g + N / 2, sample[g] == sample[g + N / 2])
 }
 
 // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
 fn width<T>(l: *mut T, r: *mut T) -> usize {
-    assert!(core::mem::size_of::<T>() > 0);
+    assert!(mem::size_of::<T>() > 0);
     unsafe { r.offset_from(l).max(0) as usize }
 }

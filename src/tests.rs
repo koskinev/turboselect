@@ -186,7 +186,7 @@ fn nth() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        quickselect(&mut data, index, &mut usize::lt, rng.as_mut());
+        quickselect(&mut data, index, rng.as_mut());
         let nth = &data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
             i if i < index && elem > nth => panic!("{} > {} at {}", elem, nth, i),
@@ -212,7 +212,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        quickselect(&mut data, index, &mut usize::lt, &mut rng);
+        quickselect(&mut data, index, &mut rng);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
@@ -252,7 +252,7 @@ fn min_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (_u, v) = partition_min(data.as_mut_slice(), 0, &mut usize::lt);
+        let (_u, v) = partition_min(data.as_mut_slice(), 0);
         let min = &data[0];
         for (i, elem) in data.iter().enumerate() {
             if i <= v {
@@ -267,7 +267,7 @@ fn min_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_min(data.as_mut_slice(), 0, &mut usize::lt);
+    let (u, v) = partition_min(data.as_mut_slice(), 0);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
@@ -285,7 +285,7 @@ fn max_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (u, _v) = partition_max(data.as_mut_slice(), 0, &mut usize::lt);
+        let (u, _v) = partition_max(data.as_mut_slice(), 0);
         let max = &data[u];
         for (i, elem) in data.iter().enumerate() {
             if i >= u {
@@ -300,7 +300,7 @@ fn max_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_max(data.as_mut_slice(), 0, &mut usize::lt);
+    let (u, v) = partition_max(data.as_mut_slice(), 0);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
@@ -317,7 +317,7 @@ fn sorts() {
         let pos: [usize; N] = core::array::from_fn(|i| i);
         for _iter in 0..repeat {
             let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
-            sort_at(&mut data, pos, &mut usize::lt);
+            sort_at(&mut data, pos);
             for i in 1..N {
                 assert!(data[i - 1] <= data[i]);
             }
