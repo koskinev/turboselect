@@ -42,9 +42,8 @@ impl<T> DerefMut for Elem<T> {
 
 impl<T> Drop for Elem<T> {
     fn drop(&mut self) {
-        // SAFETY: This is a helper class. Please refer to its usage for correctness. Namely, one
-        // must be sure that `src` and `dst` does not overlap as required by
-        // `ptr::copy_nonoverlapping` and are both valid for writes.
+        // SAFETY: This is a helper class. We must ensure that `dst` is valid for writes and is
+        // not referenced by anyone else.
         unsafe {
             let value = ManuallyDrop::take(&mut self.value);
             ptr::write(self.dst, value)
@@ -63,17 +62,18 @@ impl<T> Elem<T> {
     }
 }
 
-/// Partitions `data` into two parts using the element at `index` as the pivot. Returns `(u, u)`,
-/// where `u` is the number of elements less than the pivot, and the index of the pivot after
-/// partitioning.
+/// Partitions `data` into three parts using the element at `index` as the pivot. Returns `(u, v)`,
+/// where `u` is the number of elements less than the pivot, and `v - u` is the number of elements
+/// following the pivot equal to it. Note that `v` is not the number of elements less than or equal
+/// to the pivot, because the rightmost partition may contain elements equal to the pivot.
 ///
 /// The resulting partitioning is as follows:
 ///
 /// ```text
-/// ┌─────────────────────────────┬──────────────────────────────┐
-/// │ is_less(&data[x], &data[u]) │ !is_less(&data[x], &data[u]) │
-/// └─────────────────────────────┴──────────────────────────────┘
-///                                u        
+/// ┌─────────────┬──────────────┬──────────────┐
+/// │ x < data[u] │ x == data[u] │ x >= data[u] │
+/// └─────────────┴──────────────┴──────────────┘
+///                u            v
 /// ```
 ///
 /// Panics if `index` is out of bounds.
@@ -94,8 +94,8 @@ where
         // Find the positions of the first pair of out-of-order elements.
         let (mut l, mut r) = (0, tail.len());
         unsafe {
-            // The calls to get_unchecked are safe, because the slice is non-empty and we ensure l
-            // <= r.
+            // SAFETY: The calls to get_unchecked are safe, because the slice is non-empty and we
+            // ensure that `l <= r`.
             while l < r && tail.get_unchecked(l) < &*pivot {
                 l += 1;
             }
@@ -105,6 +105,7 @@ where
         }
         u = l + partition_in_blocks(&mut tail[l..r], &*pivot);
         v = u;
+        // Scan the elements after the pivot until we find one that is not equal to the pivot.
         while v < tail.len() && unsafe { tail.get_unchecked(v) } == &*pivot {
             v += 1;
         }
@@ -121,11 +122,10 @@ where
 /// The resulting partitioning is:
 ///
 /// ```text
-/// ┌─────────────────────────────┬─────────────────────────────────┬─────────────────────────────┐
-/// │ is_less(&data[x], &data[u]) │    !is_less(&data[x], &data[u]) │ is_less(&data[v], &data[x]) │
-/// │                             │ && !is_less(&data[v], &data[x]) │                             │
-/// └─────────────────────────────┴─────────────────────────────────┴─────────────────────────────┘
-///                                u                               v
+/// ┌─────────────┬──────────────┬─────────────┐
+/// │ x < data[u] │ x == data[u] │ x > data[u] │
+/// └─────────────┴──────────────┴─────────────┘
+///                u            v
 /// ```
 ///
 /// Panics if `index` is out of bounds.
@@ -226,20 +226,17 @@ where
 
             for i in 0..block_l {
                 // SAFETY: The unsafety operations below involve the usage of the `offset`.
-                //         According to the conditions required by the function, we satisfy them
+                // According to the conditions required by the function, we satisfy them
                 // because:
-                //         1. `offsets_l` is stack-allocated, and thus considered separate allocated
-                //            object.
-                //         2. The function `is_less` returns a `bool`. Casting a `bool` will never
-                //            overflow `isize`.
-                //         3. We have guaranteed that `block_l` will be `<= BLOCK`. Plus, `end_l`
-                //            was initially set to the begin pointer of `offsets_` which was
-                //            declared on the stack. Thus, we know that even in the worst case (all
-                //            invocations of `is_less` returns false) we will only be at most 1 byte
-                //            pass the end.
-                //        Another unsafety operation here is dereferencing `elem`.
-                //        However, `elem` was initially the begin pointer to the slice which is
-                // always valid.
+                // 1. `offsets_l` is stack-allocated, and thus considered separate allocated object.
+                // 2. The comparison returns a `bool`. Casting a `bool` will never overflow `isize`.
+                // 3. We have guaranteed that `block_l` will be `<= BLOCK`. Plus, `end_l` was
+                //    initially set to the begin pointer of `offsets_l` which was declared on the
+                //    stack. Thus, we know that even in the worst case (all comparisons return true)
+                //    we will only be at most 1 byte pass the end
+                //
+                // Another unsafety operation here is dereferencing `elem`. However, `elem` was
+                // initially the begin pointer to the slice which is always valid.
                 unsafe {
                     // Branchless comparison.
                     *end_l = i as u8;
@@ -257,22 +254,19 @@ where
 
             for i in 0..block_r {
                 // SAFETY: The unsafety operations below involve the usage of the `offset`.
-                //         According to the conditions required by the function, we satisfy them
+                // According to the conditions required by the function, we satisfy them
                 // because:
-                //         1. `offsets_r` is stack-allocated, and thus considered separate allocated
-                //            object.
-                //         2. The function `is_less` returns a `bool`. Casting a `bool` will never
-                //            overflow `isize`.
-                //         3. We have guaranteed that `block_r` will be `<= BLOCK`. Plus, `end_r`
-                //            was initially set to the begin pointer of `offsets_` which was
-                //            declared on the stack. Thus, we know that even in the worst case (all
-                //            invocations of `is_less` returns true) we will only be at most 1 byte
-                //            pass the end.
-                //        Another unsafety operation here is dereferencing `elem`.
-                //        However, `elem` was initially `1 * sizeof(T)` past the end and we
-                // decrement it by `1 * sizeof(T)` before accessing it.        Plus,
-                // `block_r` was asserted to be less than `BLOCK` and `elem` will therefore at most
-                // be pointing to the beginning of the slice.
+                // 1. `offsets_r` is stack-allocated, and thus considered separate allocated object.
+                // 2. The comparison returns a `bool`. Casting a `bool` will never overflow `isize`.
+                // 3. We have guaranteed that `block_r` will be `<= BLOCK`. Plus, `end_r` was
+                //    initially set to the begin pointer of `offsets_r` which was declared on the
+                //    stack. Thus, we know that even in the worst case (all all comparisons return
+                //    true) we will only be at most 1 byte pass the end.
+                //
+                // Another unsafety operation here is dereferencing `elem`. However, `elem` was
+                // initially `1 * sizeof(T)` past the end and we decrement it by `1 * sizeof(T)`
+                // before accessing it. Plus, `block_r` was asserted  to be less than `BLOCK` and
+                // `elem` will therefore at most be pointing to the  beginning of the slice.
                 unsafe {
                     // Branchless comparison.
                     elem = elem.sub(1);
@@ -420,7 +414,17 @@ where
 
 /// Puts the maximum elements at the end of the slice and returns the indices of the first and
 /// last elements equal to the maximum. The `init` argument is the index of the element to use as
-/// the initial maximum.
+/// the initial maximum. Returns `(u, v)`, where `u` is the number of elements smaller than the
+/// maximum, and `v` is the index of the last element in the slice.
+///
+/// The resulting partitioning is as follows:
+///
+/// ```text
+/// ┌─────────┬──────────┐
+/// │ x < max │ x == max │
+/// └─────────┴──────────┘
+///          u          v == len - 1
+/// ```
 fn partition_max<T>(data: &mut [T], init: usize) -> (usize, usize)
 where
     T: Ord,
@@ -441,7 +445,17 @@ where
 
 /// Puts the minimum elements at the beginning of the slice and returns the indices of the first and
 /// last elements equal to the minimum. The `init` argument is the index of the element to use as
-/// the initial minimum.
+/// the initial minimum. Returns `(u, v)`, where `u` is 0 and `v` is the number of elements equal
+/// to the minimum.
+///
+/// The resulting partitioning is as follows:
+///
+/// ```text
+/// ┌──────────┬─────────┐
+/// │ x == min │ x > min │
+/// └──────────┴─────────┘
+///  u == 0   v
+/// ```
 fn partition_min<T>(data: &mut [T], init: usize) -> (usize, usize)
 where
     T: Ord,
@@ -459,6 +473,7 @@ where
 
     // Copy the initial minimum to the stack
     let (head, tail) = data.split_first_mut().unwrap();
+    // SAFETY: `head` is not used after this point.
     let mut min = unsafe { Elem::new(head) };
 
     let Range { start: l, end: r } = tail.as_mut_ptr_range();
@@ -476,6 +491,18 @@ where
         let block = cmp::min(BLOCK, width(elem, r));
         unsafe {
             // Scan the block and store offsets to the elements that satisfy `elem <= minimum`.
+            // SAFETY: The unsafety operations below involve the usage of the `offset`.
+            // According to the conditions required by the function, we satisfy them
+            // because:
+            // 1. `offsets` is stack-allocated, and thus considered separate allocated object.
+            // 2. The comparison returns a `bool`. Casting a `bool` will never overflow `isize`.
+            // 3. We have guaranteed that `block` will be `<= BLOCK`. Plus, `end` was initially set
+            //    to the begin pointer of `offsets` which was declared on the stack. Thus, we know
+            //    that even in the worst case (all comparisons return true) we will only be at most
+            //    1 byte pass the end
+            //
+            // Another unsafety operation here is dereferencing `elem`. However, `elem` was
+            // initially the begin pointer to the slice which is always valid.
             for offset in 0..block {
                 end.write(offset as u8);
                 let is_le = *elem.add(offset) <= *min;
@@ -483,22 +510,32 @@ where
             }
             // Scan the found elements
             for _ in 0..width(start, end) {
+                // SAFETY: We know that the element is in bounds because we just scanned it.
                 let next = elem.add(*start as usize);
                 match (*next).cmp(&*min) {
                     Ordering::Less => {
                         // We found a new minimum.
                         dup = l;
+                        // SAFETY: `next` and `min` are both valid and they cannot overlap because
+                        // `min` is allocated on the stack, while `next` points to an element of the
+                        // slice.
                         ptr::swap_nonoverlapping(next, &mut *min, 1);
                     }
                     Ordering::Equal => {
                         // We found an element equal to the minimum.
                         if width(l, dup) < width(l, next) {
+                            // SAFETY: The above condition ensures that `next` and `dup` don't
+                            // overlap. Also, `dup` cannot be off bounds (see below).
                             ptr::swap_nonoverlapping(next, dup, 1);
                         }
+                        // SAFETY: `dup` is guaranteed to be in bounds, since it's incremented at
+                        // most `tail.len()` times.
                         dup = dup.add(1);
                     }
                     _ => {}
                 }
+                // SAFETY: `start` is guaranteed to be in bounds, since `width(start, end) <=
+                // BLOCK`.
                 start = start.add(1);
             }
             elem = elem.add(block);
@@ -513,28 +550,34 @@ where
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
 /// Panics if `index >= data.len()`.
-fn turboselect<T>(mut data: &mut [T], mut index: usize, rng: &mut WyRng) -> (usize, usize)
+fn turboselect<T>(mut data: &mut [T], mut index: usize, rng: &mut WyRng)
 where
     T: Ord,
 {
     assert!(index < data.len());
-    let mut offset = 0;
-    let mut was = None;
+
+    // If there are less than two elements, there is nothing to do. If `T` is a zero sized type, it
+    // cannot have any meaningful ordering, so we just return.
+    if data.len() < 2 || mem::size_of::<T>() == 0 {
+        return;
+    }
+
+    let mut previous_pivot = None;
     while data.len() > 8 {
         let (u, v) = match index {
             0 => partition_min(data, 0),
             i if i == data.len() - 1 => partition_max(data, 0),
             _ => {
-                let (p, all_eq) = select_pivot(data, index, rng);
-                match was {
+                let (p, is_repeated) = choose_pivot(data, index, rng);
+                match previous_pivot {
                     // Test if the selected pivot is equal to a previous pivot from the left. In
                     // this case we know that the pivot is the minimum of the current slice.
-                    Some(w) if w == &data[p] => partition_min(data, p),
+                    Some(was) if was == &data[p] => partition_min(data, p),
 
                     // If the selected pivot is equal to it's neighbor elements, use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
-                    _ if all_eq => partition_equal(data, p),
+                    _ if is_repeated => partition_equal(data, p),
 
                     // Otherwise, use the default binary partioning.
                     _ => partition_at(data, p),
@@ -551,16 +594,13 @@ where
             // Select the right part. Elements on the right can be equal to the pivot,
             // so we store it.
             let (head, tail) = data.split_at_mut(v + 1);
-            (data, was) = (tail, head.last());
+            (data, previous_pivot) = (tail, head.last());
             index -= v + 1;
-            offset += v + 1;
         } else {
-            return (offset + u, offset + v);
+            return;
         }
     }
     tinysort(data);
-    let u = index + offset;
-    (u, u)
 }
 
 /// Samples `count` elements randomly and places them into the beginning of the slice. Returns the
@@ -571,64 +611,57 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
     assert!(len > 0);
     unsafe {
         let ptr = data.as_mut_ptr();
-        // Read the first element into a temporary location. The read is safe because `ptr` points
-        // to the first element of `data` and `data` is non-empty.
+        // Read the first element into a temporary location.
+        // SAFETY: The read is safe because `ptr` points to the first element of `data` and `data`
+        // is non-empty.
         let tmp = ManuallyDrop::new(ptr::read(ptr));
-        // Select a random element and swap it with the first element. The `src` pointer is in
-        // bounds, because `rng.bounded_usize(0, len)` returns a value in the range `[0,
-        // len)`.
+        // Select a random element and swap it with the first element.
+        // SAFETY: `src` is in bounds, because `rng.bounded_usize(0, len)` returns a value in the
+        // range `[0, len)`.
         let (mut src, mut dst) = (ptr.add(rng.bounded_usize(0, len)), ptr);
-        // Copy the element at `src` to `dst`. The copy is safe, because `src` and `dst` are in
-        // bounds.
+        // Copy the element at `src` to `dst`.
+        // SAFETY: The copy is safe, because `src` and `dst` are in bounds.
         ptr::copy(src, dst, 1);
         // Continue until `count` elements have been samples.
         for i in 1..count {
-            // Select the next element. This is safe since `count <= len`.
+            // Select the next element.
+            // SAFETY: This is safe since `count <= len`.
             dst = dst.add(1);
-            // See above for why this is safe.
+            // SAFETY: See above for why this is safe.
             ptr::copy(dst, src, 1);
             src = ptr.add(rng.bounded_usize(i, len));
             ptr::copy(src, dst, 1);
         }
         // Write the temporary element (i.e the original first element) to the last sampled
-        // position. This is safe, because `src` is in bounds.
+        // position.
+        // SAFETY: This is safe, because `src` is in bounds.
         src.write(ManuallyDrop::into_inner(tmp));
         &mut data[..count]
     }
 }
 
-fn select_min<T, F>(data: &mut [T], is_less: &mut F)
+/// Finds the minimum element and puts it at the beginning of the slice.
+fn select_min<T>(data: &mut [T])
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
     let (min, _) = data
         .iter()
         .enumerate()
-        .min_by(|&(_, x), &(_, y)| {
-            if is_less(x, y) {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        })
+        .min_by(|&(_, x), &(_, y)| x.cmp(y))
         .unwrap();
     data.swap(0, min);
 }
 
-fn select_max<T, F>(data: &mut [T], is_less: &mut F)
+/// Finds the maximum element and puts it at the end of the slice.
+fn select_max<T>(data: &mut [T])
 where
-    F: FnMut(&T, &T) -> bool,
+    T: Ord,
 {
     let (max, _) = data
         .iter()
         .enumerate()
-        .max_by(|&(_, x), &(_, y)| {
-            if is_less(x, y) {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        })
+        .max_by(|&(_, x), &(_, y)| x.cmp(y))
         .unwrap();
     data.swap(max, data.len() - 1);
 }
@@ -686,11 +719,10 @@ where
     let seed = 12345678901234567890;
 
     let mut rng = WyRng::new(seed);
-
     if index == 0 {
-        select_min(data, &mut T::lt);
+        select_min(data);
     } else if index == data.len() - 1 {
-        select_max(data, &mut T::lt);
+        select_max(data);
     } else {
         turboselect(data, index, rng.as_mut());
     }
@@ -699,42 +731,38 @@ where
     (left, pivot, right)
 }
 
-/// Selects the pivot element for partitioning the slice. Returns `(p, r)` where `p` is the index
-/// of the pivot element and `r` is number neighbor elements, used to test for equality.
-fn select_pivot<T>(data: &mut [T], index: usize, rng: &mut WyRng) -> (usize, bool)
+/// Selects the pivot element for partitioning the slice. Returns `(p, is_repeated)` where `p` is
+/// the index of the pivot element and `is_repeated` is a boolean indicating if the pivot is likely
+/// to have many duplicates.
+fn choose_pivot<T>(data: &mut [T], index: usize, rng: &mut WyRng) -> (usize, bool)
 where
     T: Ord,
 {
-    match data.len() {
-        // If the slice is small, select the pivot as median of five elements.
-        // len if len < 32 => {
-        //     sort_at(data, [0, len / 4, len / 2, 3 * len / 4, len - 1], is_less);
-        //     (len / 2, !is_less(&data[0], &data[len / 2]))
-        // }
-        // For larger slices, select `N` depending on the slice length, sort N groups of N elements,
-        // select group based on the index, sort the group and return the position of the
-        // middle element.
-        // len if len < 32 => randomize_pivot::<3, _, _>(data, index, is_less, rng),
-        len if len < 256 => randomize_pivot::<3, _>(data, index, rng),
-        len if len < 2048 => randomize_pivot::<5, _>(data, index, rng),
-        len if len < 8192 => randomize_pivot::<7, _>(data, index, rng),
-        len if len < 65536 => randomize_pivot::<11, _>(data, index, rng),
-        len if len < 1048576 => randomize_pivot::<21, _>(data, index, rng),
-        _ => randomize_pivot::<31, _>(data, index, rng),
-    }
+    let (g, n) = match data.len() {
+        // Sort N groups of N elements, select group based on the index, sort the group and return
+        // the position of the middle element.
+        len if len < 256 => median_of_nths::<3, _>(data, index, rng),
+        len if len < 2048 => median_of_nths::<5, _>(data, index, rng),
+        len if len < 8192 => median_of_nths::<7, _>(data, index, rng),
+        len if len < 65536 => median_of_nths::<11, _>(data, index, rng),
+        len if len < 1048576 => median_of_nths::<21, _>(data, index, rng),
+        _ => median_of_nths::<31, _>(data, index, rng),
+    };
+    let p = g + n / 2;
+    let is_repeated = data[g] == data[p];
+    (p, is_repeated)
 }
 
 #[inline]
 /// Chooses a randomized pivot for the given index. First, puts a `N * N` random sample to the
 /// beginning of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements
-/// apart. Finally, sorts the group where the pivot is located. Returns `(u, all_eq)` where `u` is
-/// the index of the selected pivot and `all_eq` is `true` if all elements in the selected group are
-/// equal.
-fn randomize_pivot<const N: usize, T>(
+/// apart. Finally, sorts the group where the pivot is located. Returns `(g, n)` where `g` is
+/// the index of the selected group and `n` is the number of elements in the group.
+fn median_of_nths<const N: usize, T>(
     data: &mut [T],
     index: usize,
     rng: &mut WyRng,
-) -> (usize, bool)
+) -> (usize, usize)
 where
     T: Ord,
 {
@@ -747,11 +775,13 @@ where
     }
     let pos: [_; N] = array::from_fn(|i| g + i);
     sort_at(sample, pos);
-    (g + N / 2, sample[g] == sample[g + N / 2])
+    (g, N)
 }
 
 // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
 fn width<T>(l: *mut T, r: *mut T) -> usize {
     assert!(mem::size_of::<T>() > 0);
+    // SAFETY: This is a helper function, refer to the usage of `ptr::offset_from` for
+    // safety.
     unsafe { r.offset_from(l).max(0) as usize }
 }
