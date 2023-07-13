@@ -125,7 +125,7 @@ fn turboselect_perf() {
         use std::io::Write;
 
         let lens = [
-            1_000, 10_000, 100_000, // 1_000_000, 10_000_000, 100_000_000
+            1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000
         ];
         let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
         let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
