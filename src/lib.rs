@@ -70,43 +70,58 @@ where
     T: Ord,
 {
     let (g, n) = match data.len() {
-        // Sort N groups of N elements, select group based on the index, sort the group and return
-        // the position of the middle element.
-        len if len < 256 => median_of_nths::<3, _>(data, index, rng),
-        len if len < 2048 => median_of_nths::<5, _>(data, index, rng),
-        len if len < 8192 => median_of_nths::<7, _>(data, index, rng),
-        len if len < 65536 => median_of_nths::<11, _>(data, index, rng),
-        len if len < 1048576 => median_of_nths::<21, _>(data, index, rng),
-        _ => median_of_nths::<31, _>(data, index, rng),
+        len if len < 256 => nth_of_nths::<3, _>(data, index, rng),
+        len if len < 2048 => nth_of_nths::<5, _>(data, index, rng),
+        len if len < 8192 => nth_of_nths::<7, _>(data, index, rng),
+        len if len < 65536 => nth_of_nths::<11, _>(data, index, rng),
+        len if len < 1048576 => nth_of_nths::<21, _>(data, index, rng),
+        _ => nth_of_nths::<31, _>(data, index, rng),
     };
-    let p = g + n / 2;
-    let is_repeated = data[g] == data[p];
-    (p, is_repeated)
+    // Compare the pivot with the first element of the group. If they are equal, the pivot is
+    // likely to have many duplicates.
+    let is_repeated = data[g] == data[g - g % n];
+    (g, is_repeated)
 }
 
 #[inline]
 /// Chooses a randomized pivot for the given index. First, puts a `N * N` random sample to the
 /// beginning of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements
-/// apart. Finally, sorts the group where the pivot is located. Returns `(g, n)` where `g` is
-/// the index of the selected group and `n` is the number of elements in the group.
-fn median_of_nths<const N: usize, T>(
-    data: &mut [T],
-    index: usize,
-    rng: &mut WyRng,
-) -> (usize, usize)
+/// apart. Finally, sorts the group where the pivot is located. Returns `(p, n)` where `p` is
+/// the index of the selected pivot and `n` is the number of elements in the group.
+fn nth_of_nths<const N: usize, T>(data: &mut [T], index: usize, rng: &mut WyRng) -> (usize, usize)
 where
     T: Ord,
 {
+    let izi = |x| x as isize;
+    let uzi = |x| x as usize;
+
     let len = data.len();
+
+    // Take the sample and reorder it into `N` groups.
     let sample = sample(data, N * N, rng);
-    let g = N * ((N * index) / len);
     for j in 0..N {
         let pos: [_; N] = array::from_fn(|i| j + N * i);
         sort_at(sample, pos);
     }
-    let pos: [_; N] = array::from_fn(|i| g + i);
+
+    // Calculate:
+    // - `k`: sample index corresponding to the pivot location.
+    // - `g`: first element of the `N`-element group where the pivot is located.
+    let k = izi((N * N * index) / len);
+    let g = k - k % izi(N);
+
+    // Sort the group where the pivot is located.
+    let pos: [_; N] = array::from_fn(|i| uzi(g) + i);
     sort_at(sample, pos);
-    (g, N)
+
+    // Calculate:
+    // - `o`: the offset of the pivot from the group median. We scale the offset by `2` to keep it
+    //   near the median of the group.
+    // - `p`: the index of the pivot.
+    let o = (k - g - izi(N / 2)) / 2;
+    let p = g + o + izi(N / 2);
+
+    (uzi(p), N)
 }
 
 /// Partitions `data` into three parts using the element at `index` as the pivot. Returns `(u, v)`,
