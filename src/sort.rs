@@ -25,8 +25,8 @@ where
 }
 
 #[rustfmt::skip]
-/// Sorts the elements at the positions in `pos` so that the smallest element becomes `pos0,` and
-/// each element `pos[i]` is less than or equal to the element at `pos[j]` if `i < j`.
+/// Sorts the elements at the positions in `pos` so that each element at `pos[i]` is less than or 
+/// equal to the element at `pos[j]` if `i < j`.
 /// 
 /// The sorting networks are from https://bertdobbelaere.github.io/sorting_networks.html
 pub(crate) fn sort_at<T, const N: usize>(data: &mut [T], pos: [usize; N])
@@ -162,8 +162,8 @@ where
             sort2!(19, 20); sort2!(21, 22); sort2!(23, 24); sort2!(25, 26); sort2!(27, 28); 
             
         }
-        _ => unimplemented!("sort not implemented for N={N}"),
-    } 
+        _ => unimplemented!("not implemented for N={N}"),
+    }
 }
 
 #[rustfmt::skip]
