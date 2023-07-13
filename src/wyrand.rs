@@ -7,11 +7,6 @@ pub struct WyRng {
 }
 
 impl WyRng {
-    /// Returns a mutable reference to the RNG.
-    pub fn as_mut(&mut self) -> &mut Self {
-        self
-    }
-
     /// Returns a `bool`.
     pub fn bool(&mut self) -> bool {
         self.u64() > u64::MAX / 2
@@ -180,5 +175,11 @@ impl WyRng {
     /// Returns a `u128`.
     pub fn u128(&mut self) -> u128 {
         (self.u64() as u128) << 64 | self.u64() as u128
+    }
+}
+
+impl AsMut<WyRng> for WyRng {
+    fn as_mut(&mut self) -> &mut Self {
+        self
     }
 }
