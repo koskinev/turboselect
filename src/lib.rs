@@ -217,16 +217,13 @@ fn partition_equal_min<T>(data: &mut [T], init: usize) -> (usize, usize)
 where
     T: Ord,
 {
-    // If there is only on element, it is the minimum.
+    // If the slice is empty or it has only one element, there is nothing to do.
     if data.len() < 2 {
         return (0, data.len() - 1);
     }
 
-    // Initialize the minimum by scanning some elements.
+    // Initialize the minimum
     data.swap(0, init);
-    sort_at(data, [0, data.len() - 1]);
-    sort_at(data, [0, data.len() / 2]);
-    sort_at(data, [0, 1]);
 
     // Copy the initial minimum to the stack
     let (head, tail) = data.split_first_mut().unwrap();
@@ -247,7 +244,7 @@ where
         // Scan the next block.
         let block = cmp::min(BLOCK, width(elem, r));
         unsafe {
-            // Scan the block and store offsets to the elements that satisfy `elem <= minimum`.
+            // Scan the block and store offsets to the elements that satisfy `elem <= min`.
             // SAFETY: The unsafety operations below involve the usage of the `offset`.
             // According to the conditions required by the function, we satisfy them
             // because:
