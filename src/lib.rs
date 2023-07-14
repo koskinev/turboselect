@@ -100,17 +100,40 @@ fn choose_pivot<T, F>(data: &mut [T], index: usize, rng: &mut WyRng, lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let (p, n) = match data.len() {
-        len if len < 256 => nth_of_nths::<3, _, _>(data, index, rng, lt),
-        len if len < 2048 => nth_of_nths::<5, _, _>(data, index, rng, lt),
-        len if len < 8192 => nth_of_nths::<7, _, _>(data, index, rng, lt),
-        len if len < 65536 => nth_of_nths::<11, _, _>(data, index, rng, lt),
-        len if len < 1048576 => nth_of_nths::<21, _, _>(data, index, rng, lt),
-        _ => nth_of_nths::<31, _, _>(data, index, rng, lt),
+    let len = data.len();
+    let (p, is_repeated) = if len <= 256 {
+        nth_of_nths::<3, _, _>(data, index, rng, lt)
+    } else if len <= 1024 {
+        nth_of_nths::<5, _, _>(data, index, rng, lt)
+    } else {
+        const GAP: f64 = 0.01;
+        let sign = 1. - 2. * (index > data.len() / 2) as u64 as f64;
+        let count = match len {
+            len if len <= 2048 => 25,
+            len if len <= 8192 => 50,
+            len if len <= 65536 => 125,
+            len if len <= 1048576 => 500,
+            len if len <= 8388608 => 1000,
+            _ => 2000,
+        };
+
+        // Choose an index in the range `[0, count)`, biasing towards the middle of the
+        // range. This increases the propability that we can recurse into the smaller partition.
+        let x = (index as f64) / data.len() as f64;
+        let k = (count as f64 * (x + sign * GAP)) as usize;
+        let sample = sample(data, count, rng);
+
+        // The pivot is the `kth` item in the sample.
+        turboselect(sample, k, rng, lt);
+
+        // If the pivot is equal to either of it's neighbors, it is likely to have many duplicates.
+        let is_repeated = match k {
+            0 => ge!(&data[k], &data[k + 1], lt),
+            k if k == count - 1 => ge!(&data[k - 1], &data[k], lt),
+            _ => ge!(&data[k - 1], &data[k], lt) || ge!(&data[k], &data[k + 1], lt),
+        };
+        (k, is_repeated)
     };
-    // Compare the pivot with the first element of the group. If they are equal, the pivot is
-    // likely to have many duplicates.
-    let is_repeated = ge!(&data[p - p % n], &data[p], lt);
     (p, is_repeated)
 }
 
@@ -124,7 +147,7 @@ fn nth_of_nths<const N: usize, T, F>(
     index: usize,
     rng: &mut WyRng,
     lt: &mut F,
-) -> (usize, usize)
+) -> (usize, bool)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -155,9 +178,12 @@ where
     //   near the median of the group.
     // - `p`: the index of the pivot.
     let o = (k - g - izi(N / 2)) / 2;
-    let p = g + o + izi(N / 2);
+    let p = uzi(g + o + izi(N / 2));
 
-    (uzi(p), N)
+    // Compare the pivot with the first element of the group. If they are equal, the pivot is
+    // likely to have many duplicates.
+    let is_repeated = ge!(&data[uzi(g)], &data[p], lt);
+    (p, is_repeated)
 }
 
 /// Partitions `data` into three parts using the element at `index` as the pivot. Returns `(u, v)`,
@@ -1017,7 +1043,7 @@ fn split_partition<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T, &mut [
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
 /// Panics if `index >= data.len()`.
-fn turboselect<T, F>(mut data: &mut [T], mut index: usize, rng: &mut WyRng, mut lt: F)
+fn turboselect<T, F>(mut data: &mut [T], mut index: usize, rng: &mut WyRng, lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -1032,22 +1058,22 @@ where
     let mut previous_pivot = None;
     while data.len() > 8 {
         let (u, v) = match index {
-            0 => partition_equal_min(data, 0, &mut lt),
-            i if i == data.len() - 1 => partition_equal_max(data, 0, &mut lt),
+            0 => partition_equal_min(data, 0, lt),
+            i if i == data.len() - 1 => partition_equal_max(data, 0, lt),
             _ => {
-                let (p, is_repeated) = choose_pivot(data, index, rng, &mut lt);
+                let (p, is_repeated) = choose_pivot(data, index, rng, lt);
                 match previous_pivot {
                     // Test if the selected pivot is equal to a previous pivot from the left. In
                     // this case we know that the pivot is the minimum of the current slice.
-                    Some(was) if ge!(was, &data[p], lt) => partition_equal_min(data, p, &mut lt),
+                    Some(was) if ge!(was, &data[p], lt) => partition_equal_min(data, p, lt),
 
                     // If the selected pivot is equal to it's neighbor elements, use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
-                    _ if is_repeated => partition_equal(data, p, &mut lt),
+                    _ if is_repeated => partition_equal(data, p, lt),
 
                     // Otherwise, use the default binary partioning.
-                    _ => partition_at(data, p, &mut lt),
+                    _ => partition_at(data, p, lt),
                 }
             }
         };
@@ -1067,7 +1093,7 @@ where
             return;
         }
     }
-    tinysort(data, &mut lt);
+    tinysort(data, lt);
 }
 
 // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
