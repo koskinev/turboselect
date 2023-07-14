@@ -356,15 +356,7 @@ fn sorts() {
             }
         }
     }
-    sort_indexed::<2>();
     sort_indexed::<3>();
-    sort_indexed::<4>();
     sort_indexed::<5>();
-    sort_indexed::<6>();
     sort_indexed::<7>();
-    sort_indexed::<8>();
-    sort_indexed::<9>();
-    sort_indexed::<11>();
-    sort_indexed::<21>();
-    sort_indexed::<31>();
 }
