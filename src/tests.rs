@@ -209,26 +209,27 @@ fn pivots() {
 
     let mut output = std::fs::File::create("misc/pivots.csv").unwrap();
     let mut results = Vec::new();
-    let mut good_pivots = 0;
-    writeln!(results, "index,partition_at,fit").unwrap();
+    let mut total_cost = 0;
+    writeln!(results, "index,partition_at,cost").unwrap();
     for _iter in 0..repeat {
         let mut data: Vec<_> = (0..count).collect();
         shuffle(&mut data, rng.as_mut());
 
         let index = rng.bounded_usize(0, count);
+        let min_cost = index.min(count - index);
+
         let (p, _) = choose_pivot(&mut data, index, rng.as_mut(), &mut usize::lt);
-        let partition_at = data[p];
-        let overshoot = if index < count / 2 {
-            partition_at < index
+        let pivot = data[p];
+        let cost = if pivot >= index {
+            pivot - min_cost
         } else {
-            partition_at > index
+            (count - pivot) - min_cost
         };
-        good_pivots += usize::from(!overshoot);
-        let fit = if overshoot { "bad" } else { "good" };
-        writeln!(results, "{index},{partition_at},{fit}").unwrap();
+        total_cost += cost;
+        writeln!(results, "{index},{pivot},{cost}").unwrap(); // 1193
     }
-    let ratio = good_pivots as f64 / repeat as f64;
-    println!("good pivots: {good_pivots}/{repeat}, ratio {ratio:.3}",);
+    let ratio = total_cost as f64 / repeat as f64;
+    println!("relative cost: {ratio:.3}",);
     output.write_all(&results).unwrap();
 }
 
