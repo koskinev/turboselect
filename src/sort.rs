@@ -3,9 +3,9 @@ use core::mem::ManuallyDrop;
 #[inline]
 /// Compares the elements at `a` and `b` and swaps them if `a` is greater than `b`. Returns `true`
 /// if the elements were swapped.
-fn swap<T>(data: &mut [T], a: usize, b: usize) -> bool
+fn swap<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) -> bool
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     debug_assert!(a != b);
     debug_assert!(a < data.len());
@@ -14,7 +14,7 @@ where
     unsafe {
         let ptr = data.as_mut_ptr();
         let (a, b) = (a as isize, b as isize);
-        let swap = (*ptr.offset(b) < *ptr.offset(a)) as isize;
+        let swap = lt(&*ptr.offset(b), &*ptr.offset(a)) as isize;
         let max = ptr.offset(swap * a + (1 - swap) * b);
         let min = ptr.offset(swap * b + (1 - swap) * a);
         let tmp = ManuallyDrop::new(core::ptr::read(max));
@@ -29,13 +29,13 @@ where
 /// equal to the element at `pos[j]` if `i < j`.
 /// 
 /// The sorting networks are from https://bertdobbelaere.github.io/sorting_networks.html
-pub(crate) fn sort_at<T, const N: usize>(data: &mut [T], pos: [usize; N])
+pub(crate) fn sort_at<T, F, const N: usize>(data: &mut [T], pos: [usize; N], lt: &mut F)
 where
-    T: Ord
+    F: FnMut(&T, &T) -> bool,
 {
     macro_rules! sort2 {
         ($a:expr, $b:expr) => {
-            swap(data, pos[$a], pos[$b]);
+            swap(data, pos[$a], pos[$b], lt);
         };
     }
     match N {
@@ -167,13 +167,13 @@ where
 }
 
 #[rustfmt::skip]
-pub(crate) fn tinysort<T>(data: &mut [T])
+pub(crate) fn tinysort<T,F>(data: &mut [T],  lt: &mut F)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     macro_rules! sort2 {
         ($a:expr, $b:expr) => {
-            swap(data, $a, $b);
+            swap(data, $a, $b, lt);
         };
     }
     match data.len() {

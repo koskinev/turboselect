@@ -95,7 +95,7 @@ fn min_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (_u, v) = partition_equal_min(&mut data, 0);
+        let (_u, v) = partition_equal_min(&mut data, 0, &mut usize::lt);
         let min = &data[0];
         for (i, elem) in data.iter().enumerate() {
             if i <= v {
@@ -110,7 +110,7 @@ fn min_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_equal_min(&mut data, 0);
+    let (u, v) = partition_equal_min(&mut data, 0, &mut usize::lt);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
@@ -127,7 +127,7 @@ fn max_10() {
     for _iter in 0..repeat {
         let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
         let mut cloned = data.clone();
-        let (u, _v) = partition_equal_max(&mut data, 0);
+        let (u, _v) = partition_equal_max(&mut data, 0, &mut usize::lt);
         let max = &data[u];
         for (i, elem) in data.iter().enumerate() {
             if i >= u {
@@ -142,7 +142,7 @@ fn max_10() {
     }
 
     let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_equal_max(data.as_mut_slice(), 0);
+    let (u, v) = partition_equal_max(data.as_mut_slice(), 0, &mut usize::lt);
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
@@ -167,7 +167,7 @@ fn nth() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        turboselect(&mut data, index, rng.as_mut());
+        turboselect(&mut data, index, rng.as_mut(), &mut usize::lt);
         let nth = &data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
             i if i < index && elem > nth => panic!("{} > {} at {}", elem, nth, i),
@@ -193,7 +193,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        turboselect(&mut data, index, &mut rng);
+        turboselect(&mut data, index, &mut rng, &mut usize::lt);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
@@ -216,7 +216,7 @@ fn pivots() {
         shuffle(&mut data, rng.as_mut());
 
         let index = rng.bounded_usize(0, count);
-        let (p, _) = choose_pivot(&mut data, index, rng.as_mut());
+        let (p, _) = choose_pivot(&mut data, index, rng.as_mut(), &mut usize::lt);
         let partition_at = data[p];
         let overshoot = if index < count / 2 {
             partition_at < index
@@ -349,7 +349,7 @@ fn sorts() {
         let pos: [usize; N] = core::array::from_fn(|i| i);
         for _iter in 0..repeat {
             let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
-            sort_at(&mut data, pos);
+            sort_at(&mut data, pos, &mut usize::lt);
             for i in 1..N {
                 assert!(data[i - 1] <= data[i]);
             }
