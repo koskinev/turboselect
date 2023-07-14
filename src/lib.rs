@@ -101,38 +101,40 @@ where
     F: FnMut(&T, &T) -> bool,
 {
     let len = data.len();
-    let (p, is_repeated) = if len <= 256 {
-        nth_of_nths::<3, _, _>(data, index, rng, lt)
-    } else if len <= 1024 {
-        nth_of_nths::<5, _, _>(data, index, rng, lt)
-    } else {
-        const GAP: f64 = 0.01;
-        let sign = 1. - 2. * (index > data.len() / 2) as u64 as f64;
-        let count = match len {
-            len if len <= 2048 => 25,
-            len if len <= 8192 => 50,
-            len if len <= 65536 => 125,
-            len if len <= 1048576 => 500,
-            len if len <= 8388608 => 1000,
-            _ => 2000,
-        };
+    let (p, is_repeated) = match data.len() {
+        // For relatively small slices, we use a `kth-of-nths` strategy.
+        len if len <= 256 => kth_of_nths::<3, _, _>(data, index, rng, lt),
+        len if len <= 1024 => kth_of_nths::<5, _, _>(data, index, rng, lt),
+        len if len <= 8192 => kth_of_nths::<7, _, _>(data, index, rng, lt),
+        // Larger slices benefit from more accurate pivot selection.
+        _ => {
+            const GAP: f64 = 0.01;
+            let sign = 1. - 2. * (index > data.len() / 2) as u64 as f64;
+            let count = match len {
+                len if len <= 65536 => 125,
+                len if len <= 1048576 => 500,
+                len if len <= 8388608 => 1000,
+                _ => 2000,
+            };
 
-        // Choose an index in the range `[0, count)`, biasing towards the middle of the
-        // range. This increases the propability that we can recurse into the smaller partition.
-        let x = (index as f64) / data.len() as f64;
-        let k = (count as f64 * (x + sign * GAP)) as usize;
-        let sample = sample(data, count, rng);
+            // Choose an index in the range `[0, count)`, biasing towards the middle of the
+            // range. This increases the propability that we can recurse into the smaller partition.
+            let x = (index as f64) / data.len() as f64;
+            let k = (count as f64 * (x + sign * GAP)) as usize;
+            let sample = sample(data, count, rng);
 
-        // The pivot is the `kth` item in the sample.
-        turboselect(sample, k, rng, lt);
+            // The pivot is the `kth` item in the sample.
+            turboselect(sample, k, rng, lt);
 
-        // If the pivot is equal to either of it's neighbors, it is likely to have many duplicates.
-        let is_repeated = match k {
-            0 => ge!(&data[k], &data[k + 1], lt),
-            k if k == count - 1 => ge!(&data[k - 1], &data[k], lt),
-            _ => ge!(&data[k - 1], &data[k], lt) || ge!(&data[k], &data[k + 1], lt),
-        };
-        (k, is_repeated)
+            // If the pivot is equal to either of it's neighbors, it is likely to have many
+            // duplicates.
+            let is_repeated = match k {
+                0 => ge!(&data[k], &data[k + 1], lt),
+                k if k == count - 1 => ge!(&data[k - 1], &data[k], lt),
+                _ => ge!(&data[k - 1], &data[k + 1], lt),
+            };
+            (k, is_repeated)
+        }
     };
     (p, is_repeated)
 }
@@ -142,7 +144,7 @@ where
 /// beginning of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements
 /// apart. Finally, sorts the group where the pivot is located. Returns `(p, n)` where `p` is
 /// the index of the selected pivot and `n` is the number of elements in the group.
-fn nth_of_nths<const N: usize, T, F>(
+fn kth_of_nths<const N: usize, T, F>(
     data: &mut [T],
     index: usize,
     rng: &mut WyRng,
