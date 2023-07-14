@@ -1,6 +1,9 @@
 #![no_std]
 
 #[cfg(feature = "std")]
+extern crate std;
+
+#[cfg(feature = "std")]
 #[cfg(test)]
 mod benches;
 mod sort;
@@ -62,25 +65,53 @@ impl<T> Elem<T> {
     }
 }
 
+/// Given two values `x` and `y`, and a comparator function that returns `true` if `x < y`,
+/// this macro returns `true` if `x >= y`.
+///
+/// # Arguments
+///
+/// * `$x` - The first value to compare.
+/// * `$y` - The second value to compare.
+/// * `$lt` - The comparator function that returns `true` if `$x` is less than `$y`.
+macro_rules! ge {
+    ($x:expr, $y:expr, $lt:expr) => {
+        !(($lt)($x, $y))
+    };
+}
+
+/// Given two values `x` and `y`, and a comparator function that returns `true` if `x < y`,
+/// this macro returns `true` if `x <= y`.
+///
+/// # Arguments
+///
+/// * `$x` - The first value to compare.
+/// * `$y` - The second value to compare.
+/// * `$lt` - The comparator function that returns `true` if `$x` is less than `$y`.
+macro_rules! le {
+    ($x:expr, $y:expr, $lt:expr) => {
+        !($lt)($y, $x)
+    };
+}
+
 /// Selects the pivot element for partitioning the slice. Returns `(p, is_repeated)` where `p` is
 /// the index of the pivot element and `is_repeated` is a boolean indicating if the pivot is likely
 /// to have many duplicates.
-fn choose_pivot<T>(data: &mut [T], index: usize, rng: &mut WyRng) -> (usize, bool)
+fn choose_pivot<T, F>(data: &mut [T], index: usize, rng: &mut WyRng, lt: &mut F) -> (usize, bool)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
-    let (g, n) = match data.len() {
-        len if len < 256 => nth_of_nths::<3, _>(data, index, rng),
-        len if len < 2048 => nth_of_nths::<5, _>(data, index, rng),
-        len if len < 8192 => nth_of_nths::<7, _>(data, index, rng),
-        len if len < 65536 => nth_of_nths::<11, _>(data, index, rng),
-        len if len < 1048576 => nth_of_nths::<21, _>(data, index, rng),
-        _ => nth_of_nths::<31, _>(data, index, rng),
+    let (p, n) = match data.len() {
+        len if len < 256 => nth_of_nths::<3, _, _>(data, index, rng, lt),
+        len if len < 2048 => nth_of_nths::<5, _, _>(data, index, rng, lt),
+        len if len < 8192 => nth_of_nths::<7, _, _>(data, index, rng, lt),
+        len if len < 65536 => nth_of_nths::<11, _, _>(data, index, rng, lt),
+        len if len < 1048576 => nth_of_nths::<21, _, _>(data, index, rng, lt),
+        _ => nth_of_nths::<31, _, _>(data, index, rng, lt),
     };
     // Compare the pivot with the first element of the group. If they are equal, the pivot is
     // likely to have many duplicates.
-    let is_repeated = data[g] == data[g - g % n];
-    (g, is_repeated)
+    let is_repeated = ge!(&data[p - p % n], &data[p], lt);
+    (p, is_repeated)
 }
 
 #[inline]
@@ -88,9 +119,14 @@ where
 /// beginning of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements
 /// apart. Finally, sorts the group where the pivot is located. Returns `(p, n)` where `p` is
 /// the index of the selected pivot and `n` is the number of elements in the group.
-fn nth_of_nths<const N: usize, T>(data: &mut [T], index: usize, rng: &mut WyRng) -> (usize, usize)
+fn nth_of_nths<const N: usize, T, F>(
+    data: &mut [T],
+    index: usize,
+    rng: &mut WyRng,
+    lt: &mut F,
+) -> (usize, usize)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     let izi = |x| x as isize;
     let uzi = |x| x as usize;
@@ -101,7 +137,7 @@ where
     let sample = sample(data, N * N, rng);
     for j in 0..N {
         let pos: [_; N] = array::from_fn(|i| j + N * i);
-        sort_at(sample, pos);
+        sort_at(sample, pos, lt);
     }
 
     // Calculate:
@@ -112,7 +148,7 @@ where
 
     // Sort the group where the pivot is located.
     let pos: [_; N] = array::from_fn(|i| uzi(g) + i);
-    sort_at(sample, pos);
+    sort_at(sample, pos, lt);
 
     // Calculate:
     // - `o`: the offset of the pivot from the group median. We scale the offset by `2` to keep it
@@ -139,9 +175,9 @@ where
 /// ```
 ///
 /// Panics if `index` is out of bounds.
-fn partition_at<T>(data: &mut [T], index: usize) -> (usize, usize)
+fn partition_at<T, F>(data: &mut [T], index: usize, lt: &mut F) -> (usize, usize)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     // This ensures that the index is in bounds.
     data.swap(0, index);
@@ -158,17 +194,17 @@ where
         unsafe {
             // SAFETY: The calls to get_unchecked are safe, because the slice is non-empty and we
             // ensure that `l <= r`.
-            while l < r && tail.get_unchecked(l) < &*pivot {
+            while l < r && lt(tail.get_unchecked(l), &*pivot) {
                 l += 1;
             }
-            while l < r && tail.get_unchecked(r - 1) >= &*pivot {
+            while l < r && ge!(tail.get_unchecked(r - 1), &*pivot, lt) {
                 r -= 1;
             }
         }
-        u = l + partition_in_blocks(&mut tail[l..r], &*pivot);
+        u = l + partition_in_blocks(&mut tail[l..r], &*pivot, lt);
         v = u;
-        // Scan the elements after the pivot until we find one that is not equal to the pivot.
-        while v < tail.len() && unsafe { tail.get_unchecked(v) } == &*pivot {
+        // Scan the elements after the pivot until we find one that is greater than the pivot.
+        while v < tail.len() && unsafe { le!(tail.get_unchecked(v), &*pivot, lt) } {
             v += 1;
         }
     }
@@ -191,12 +227,12 @@ where
 /// ```
 ///
 /// Panics if `index` is out of bounds.
-fn partition_equal<T>(data: &mut [T], index: usize) -> (usize, usize)
+fn partition_equal<T, F>(data: &mut [T], index: usize, lt: &mut F) -> (usize, usize)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
-    let (u, v) = partition_at(data, index);
-    let dups = partition_equal_min(data[v..].as_mut(), 0).1;
+    let (u, v) = partition_at(data, index, lt);
+    let dups = partition_equal_min(data[v..].as_mut(), 0, lt).1;
     (u, v + dups)
 }
 
@@ -213,9 +249,9 @@ where
 /// └──────────┴─────────┘
 ///  u == 0   v
 /// ```
-fn partition_equal_min<T>(data: &mut [T], init: usize) -> (usize, usize)
+fn partition_equal_min<T, F>(data: &mut [T], init: usize, lt: &mut F) -> (usize, usize)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     // If the slice is empty or it has only one element, there is nothing to do.
     if data.len() < 2 {
@@ -259,34 +295,30 @@ where
             // initially the begin pointer to the slice which is always valid.
             for offset in 0..block {
                 end.write(offset as u8);
-                let is_le = *elem.add(offset) <= *min;
+                let is_le = le!(&*elem.add(offset), &*min, lt);
                 end = end.add(is_le as usize);
             }
             // Scan the found elements
             for _ in 0..width(start, end) {
                 // SAFETY: We know that the element is in bounds because we just scanned it.
                 let next = elem.add(*start as usize);
-                match (*next).cmp(&*min) {
-                    Ordering::Less => {
-                        // We found a new minimum.
-                        dup = l;
-                        // SAFETY: `next` and `min` are both valid and they cannot overlap because
-                        // `min` is allocated on the stack, while `next` points to an element of the
-                        // slice.
-                        ptr::swap_nonoverlapping(next, &mut *min, 1);
+                if lt(&*next, &*min) {
+                    // We found a new minimum.
+                    dup = l;
+                    // SAFETY: `next` and `min` are both valid and they cannot overlap because
+                    // `min` is allocated on the stack, while `next` points to an element of the
+                    // slice.
+                    ptr::swap_nonoverlapping(next, &mut *min, 1);
+                } else if le!(&*next, &*min, lt) {
+                    // We found an element equal to the minimum.
+                    if width(l, dup) < width(l, next) {
+                        // SAFETY: The above condition ensures that `next` and `dup` don't
+                        // overlap. Also, `dup` cannot be off bounds (see below).
+                        ptr::swap_nonoverlapping(next, dup, 1);
                     }
-                    Ordering::Equal => {
-                        // We found an element equal to the minimum.
-                        if width(l, dup) < width(l, next) {
-                            // SAFETY: The above condition ensures that `next` and `dup` don't
-                            // overlap. Also, `dup` cannot be off bounds (see below).
-                            ptr::swap_nonoverlapping(next, dup, 1);
-                        }
-                        // SAFETY: `dup` is guaranteed to be in bounds, since it's incremented at
-                        // most `tail.len()` times.
-                        dup = dup.add(1);
-                    }
-                    _ => {}
+                    // SAFETY: `dup` is guaranteed to be in bounds, since it's incremented at
+                    // most `tail.len()` times.
+                    dup = dup.add(1);
                 }
                 // SAFETY: `start` is guaranteed to be in bounds, since `width(start, end) <=
                 // BLOCK`.
@@ -313,16 +345,12 @@ where
 /// └─────────┴──────────┘
 ///          u          v == len - 1
 /// ```
-fn partition_equal_max<T>(data: &mut [T], init: usize) -> (usize, usize)
+fn partition_equal_max<T, F>(data: &mut [T], init: usize, lt: &mut F) -> (usize, usize)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
-    // SAFETY: `Reverse` has the same memory layout as `T`, so we can safely cast the slice to
-    // `&mut [Reverse<T>]`.
-    let rev: &mut [cmp::Reverse<T>] = unsafe { &mut *(data as *mut [T] as *mut [cmp::Reverse<T>]) };
-
-    let len = rev.len();
-    let (_, v) = partition_equal_min(rev, init);
+    let len = data.len();
+    let (_, v) = partition_equal_min(data, init, &mut |x, y| lt(y, x));
     let count = (v + 1).min(len - v - 1);
 
     let (head, right) = data.split_at_mut(len - count);
@@ -340,9 +368,9 @@ where
 /// This idea is presented in the [BlockQuicksort][pdf] paper.
 ///
 /// [pdf]: https://drops.dagstuhl.de/opus/volltexte/2016/6389/pdf/LIPIcs-ESA-2016-38.pdf
-fn partition_in_blocks<T>(data: &mut [T], pivot: &T) -> usize
+fn partition_in_blocks<T, F>(data: &mut [T], pivot: &T, lt: &mut F) -> usize
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     // Number of elements in a typical block.
     const BLOCK: usize = 128;
@@ -433,7 +461,7 @@ where
                 unsafe {
                     // Branchless comparison.
                     *end_l = i as u8;
-                    end_l = end_l.add((&*elem >= pivot) as usize);
+                    end_l = end_l.add(ge!(&*elem, pivot, lt) as usize);
                     elem = elem.add(1);
                 }
             }
@@ -464,7 +492,7 @@ where
                     // Branchless comparison.
                     elem = elem.sub(1);
                     *end_r = i as u8;
-                    end_r = end_r.add((&*elem < pivot) as usize);
+                    end_r = end_r.add(lt(&*elem, pivot) as usize);
                 }
             }
         }
@@ -606,27 +634,33 @@ where
 }
 
 /// Finds the minimum element and puts it at the beginning of the slice.
-fn partition_min<T>(data: &mut [T])
+fn partition_min<T, F>(data: &mut [T], lt: &mut F)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     let (min, _) = data
         .iter()
         .enumerate()
-        .min_by(|&(_, x), &(_, y)| x.cmp(y))
+        .min_by(|&(_, x), &(_, y)| match lt(x, y) {
+            true => Ordering::Less,
+            false => Ordering::Greater,
+        })
         .unwrap();
     data.swap(0, min);
 }
 
 /// Finds the maximum element and puts it at the end of the slice.
-fn partition_max<T>(data: &mut [T])
+fn partition_max<T, F>(data: &mut [T], lt: &mut F)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     let (max, _) = data
         .iter()
         .enumerate()
-        .max_by(|&(_, x), &(_, y)| x.cmp(y))
+        .max_by(|&(_, x), &(_, y)| match lt(y, x) {
+            true => Ordering::Less,
+            false => Ordering::Greater,
+        })
         .unwrap();
     data.swap(max, data.len() - 1);
 }
@@ -676,12 +710,12 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
 /// (i.e. does not allocate), and *O*(*n*) on average. The worst-case performance is *O*(*n* log
 /// *n*). This function is also known as "kth element" in other libraries.
 ///
-/// Returns a triplet of the following from the reordered slice:
-/// the subslice prior to `index`, the element at `index`, and the subslice after `index`;
-/// accordingly, the values in those two subslices will respectively all be less-than-or-equal-to
-/// and greater-than-or-equal-to the value of the element at `index`.
+/// Returns a triplet of the following from the reordered slice: the subslice prior to `index`, the
+/// element at `index`, and the subslice after `index`; accordingly, the values in those two
+/// subslices will respectively all be less-than-or-equal-to and greater-than-or-equal-to the value
+/// of the element at `index`.
 ///
-/// # The implementation
+/// # Implementation
 ///
 /// The implementation is similar to `core::slice::select_nth_unstable`, but it uses an adaptive
 /// pivot selection algorithm. This usually improves performance substantially, especially when
@@ -709,6 +743,7 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
 ///         || v == [-5, -3, 1, 4, 2]
 /// );
 /// ```
+#[inline]
 pub fn select_nth_unstable<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T, &mut [T])
 where
     T: Ord,
@@ -722,12 +757,257 @@ where
 
     let mut rng = WyRng::new(seed);
     if index == 0 {
-        partition_min(data);
+        partition_min(data, &mut T::lt);
     } else if index == data.len() - 1 {
-        partition_max(data);
+        partition_max(data, &mut T::lt);
     } else {
-        turboselect(data, index, rng.as_mut());
+        turboselect(data, index, rng.as_mut(), &mut T::lt);
     }
+    split_partition(data, index)
+}
+
+/// Reorder the slice with a comparator function such that the element at `index` is at its
+/// final sorted position.
+///
+/// This reordering has the additional property that any value at position `i < index` will be
+/// less than or equal to any value at a position `j > index` using the comparator function.
+/// Additionally, this reordering is unstable (i.e. any number of equal elements may end up at
+/// position `index`), in-place (i.e. does not allocate), and *O*(*n*) on average.
+/// The worst-case performance is *O*(*n* log *n*). This function is also known as
+/// "kth element" in other libraries.
+///
+/// It returns a triplet of the following from the slice reordered according to the provided
+/// comparator function: the subslice prior to `index`, the element at `index`, and the subslice
+/// after `index`; accordingly, the values in those two subslices will respectively all be
+/// less-than-or-equal-to and greater-than-or-equal-to the value of the element at `index`.
+///
+/// # Implementation
+///
+/// The implementation is similar to `core::slice::select_nth_unstable_by`, but it uses an adaptive
+/// pivot selection algorithm. This usually improves performance substantially, especially when
+/// `index` is far from the median.
+///
+/// # Panics
+///
+/// Panics when `index >= len()`, meaning it always panics on empty slices.
+///
+/// # Examples
+///
+/// ```
+/// use turboselect::select_nth_unstable_by;
+/// let mut v = [-5i32, 4, 1, -3, 2];
+///
+/// // Find the median as if the slice were sorted in descending order.
+/// select_nth_unstable_by(&mut v, 2, |a: &i32, b: &i32| b.cmp(a));
+///
+/// // We are only guaranteed the slice will be one of the following, based on the way we sort
+/// // about the specified index.
+/// assert!(
+///     v == [2, 4, 1, -5, -3]
+///         || v == [2, 4, 1, -3, -5]
+///         || v == [4, 2, 1, -5, -3]
+///         || v == [4, 2, 1, -3, -5]
+/// );
+/// ```
+#[inline]
+pub fn select_nth_unstable_by<T, F>(
+    data: &mut [T],
+    index: usize,
+    mut compare: F,
+) -> (&mut [T], &mut T, &mut [T])
+where
+    F: FnMut(&T, &T) -> Ordering,
+{
+    #[cfg(not(debug_assertions))]
+    // Use the address of the last element as the seed for the random number generator.
+    let seed = data.as_mut_ptr() as u64 + data.len() as u64;
+
+    #[cfg(debug_assertions)]
+    let seed = 12345678901234567890;
+
+    let mut rng = WyRng::new(seed);
+    let mut lt = |x: &T, y: &T| compare(x, y) == Ordering::Less;
+
+    if index == 0 {
+        partition_min(data, &mut lt);
+    } else if index == data.len() - 1 {
+        partition_max(data, &mut lt);
+    } else {
+        turboselect(data, index, rng.as_mut(), &mut lt);
+    }
+    split_partition(data, index)
+}
+
+/// Reorder the slice with a key extraction function such that the element at `index` is at its
+/// final sorted position.
+///
+/// This reordering has the additional property that any value at position `i < index` will be
+/// less than or equal to any value at a position `j > index` using the key extraction function.
+/// Additionally, this reordering is unstable (i.e. any number of equal elements may end up at
+/// position `index`), in-place (i.e. does not allocate), and *O*(*n*) on average.
+/// The worst-case performance is *O*(*n* log *n*). This function is also known as "kth element" in
+/// other libraries.
+///
+/// Returns a triplet of the following from the slice reordered according to the provided key
+/// extraction function: the subslice prior to `index`, the element at `index`, and the subslice
+/// after `index`; accordingly, the values in those two subslices will respectively all be
+/// less-than-or-equal-to and greater-than-or-equal-to the value of the element at `index`.
+///
+/// # Implementation
+///
+/// The implementation is similar to `core::slice::select_nth_unstable_by_key`, but it uses an
+/// adaptive pivot selection algorithm. This usually improves performance substantially, especially
+/// when `index` is far from the median.
+///
+/// # Panics
+///
+/// Panics when `index >= len()`, meaning it always panics on empty slices.
+///
+/// # Examples
+///
+/// ```
+/// use turboselect::select_nth_unstable_by_key;
+/// let mut v = [-5i32, 4, 1, -3, 2];
+///
+/// // Return the median as if the array were sorted according to absolute value.
+/// select_nth_unstable_by_key(&mut v, 2, |a| a.abs());
+///
+/// // We are only guaranteed the slice will be one of the following, based on the way we sort
+/// // about the specified index.
+/// assert!(
+///     v == [1, 2, -3, 4, -5]
+///         || v == [1, 2, -3, -5, 4]
+///         || v == [2, 1, -3, 4, -5]
+///         || v == [2, 1, -3, -5, 4]
+/// );
+/// ```
+#[inline]
+pub fn select_nth_unstable_by_key<T, K, F>(
+    data: &mut [T],
+    index: usize,
+    mut f: F,
+) -> (&mut [T], &mut T, &mut [T])
+where
+    F: FnMut(&T) -> K,
+    K: Ord,
+{
+    #[cfg(not(debug_assertions))]
+    // Use the address of the last element as the seed for the random number generator.
+    let seed = data.as_mut_ptr() as u64 + data.len() as u64;
+
+    #[cfg(debug_assertions)]
+    let seed = 12345678901234567890;
+
+    let mut rng = WyRng::new(seed);
+    let mut lt = |x: &T, y: &T| f(x).lt(&f(y));
+
+    if index == 0 {
+        partition_min(data, &mut lt);
+    } else if index == data.len() - 1 {
+        partition_max(data, &mut lt);
+    } else {
+        turboselect(data, index, rng.as_mut(), &mut lt);
+    }
+    split_partition(data, index)
+}
+
+#[cfg(feature = "std")]
+/// Reorder the slice with a key extraction function such that the element at `index` is at its
+/// final sorted position. During selection, the key function is called at most once per element, by
+/// using temporary storage to remember the results of key evaluation.
+///
+/// This reordering has the additional property that any value at position `i < index` will be
+/// less than or equal to any value at a position `j > index` using the key extraction function.
+/// Additionally, this reordering is unstable (i.e. any number of equal elements may end up at
+/// position `index`) and *O*(*n*) on average. The worst-case performance is *O*(*n* log *n*).
+/// This function is also known as "kth element" in other libraries.
+///
+/// Returns a triplet of the following from the slice reordered according to the provided key
+/// extraction function: the subslice prior to `index`, the element at `index`, and the subslice
+/// after `index`; accordingly, the values in those two subslices will respectively all be
+/// less-than-or-equal-to and greater-than-or-equal-to the value of the element at `index`.
+///
+/// # Implementation
+///
+/// The implementation is similar to `core::slice::select_nth_unstable_by`, but it uses an adaptive
+/// pivot selection algorithm. This usually improves performance substantially, especially when
+/// `index` is far from the median.
+///
+/// In the worst case, the algorithm allocates temporary storage in a `Vec<(K, usize)>` the
+/// length of the slice.
+///
+/// # Examples
+///
+/// ```
+/// use turboselect::select_nth_unstable_by_cached_key;
+/// let mut v = [-5i32, 4, 32, -3, 2];
+///
+/// // Return the median as if the array were sorted according to absolute value.
+/// select_nth_unstable_by_cached_key(&mut v, 2, |a| a.to_string());
+///
+/// // We are only guaranteed the slice will be one of the following, based on the way we sort
+/// // about the specified index.
+/// assert!(
+///     v == [-3, -5, 2, 32, 4]
+///         || v == [-5, -3, 2, 32, 4]
+///         || v == [-3, -5, 2, 4, 32]
+///         || v == [-5, -3, 2, 4, 32]
+/// );
+/// ```
+#[inline]
+pub fn select_nth_unstable_by_cached_key<T, K, F>(data: &mut [T], index: usize, f: F)
+where
+    F: FnMut(&T) -> K,
+    K: Ord,
+{
+    use std::vec::Vec;
+
+    // Helper macro for indexing our vector by the smallest possible type, to reduce allocation.
+    macro_rules! select_nth_by_key {
+        ($t:ty, $slice:ident, $index:ident, $f:ident) => {{
+            let mut indices: Vec<_> = $slice
+                .iter()
+                .map($f)
+                .enumerate()
+                .map(|(i, k)| (k, i as $t))
+                .collect();
+            // The elements of `indices` are unique, as they are indexed, so any sort will be
+            // stable with respect to the original slice. We use `sort_unstable` here because
+            // it requires less memory allocation.
+            select_nth_unstable(&mut indices, index);
+            for i in 0..$slice.len() {
+                let mut index = indices[i].1;
+                while (index as usize) < i {
+                    index = indices[index as usize].1;
+                }
+                indices[i].1 = index;
+                $slice.swap(i, index as usize);
+            }
+        }};
+    }
+
+    let sz_u8 = mem::size_of::<(K, u8)>();
+    let sz_u16 = mem::size_of::<(K, u16)>();
+    let sz_u32 = mem::size_of::<(K, u32)>();
+    let sz_usize = mem::size_of::<(K, usize)>();
+
+    let len = data.len();
+    if len < 2 {
+        return;
+    }
+    if sz_u8 < sz_u16 && len <= (u8::MAX as usize) {
+        return select_nth_by_key!(u8, data, index, f);
+    }
+    if sz_u16 < sz_u32 && len <= (u16::MAX as usize) {
+        return select_nth_by_key!(u16, data, index, f);
+    }
+    if sz_u32 < sz_usize && len <= (u32::MAX as usize) {
+        return select_nth_by_key!(u32, data, index, f);
+    }
+    select_nth_by_key!(usize, data, index, f)
+}
+
+fn split_partition<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T, &mut [T]) {
     let (left, rest) = data.split_at_mut(index);
     let (pivot, right) = rest.split_first_mut().unwrap();
     (left, pivot, right)
@@ -737,9 +1017,9 @@ where
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
 /// Panics if `index >= data.len()`.
-fn turboselect<T>(mut data: &mut [T], mut index: usize, rng: &mut WyRng)
+fn turboselect<T, F>(mut data: &mut [T], mut index: usize, rng: &mut WyRng, mut lt: F)
 where
-    T: Ord,
+    F: FnMut(&T, &T) -> bool,
 {
     assert!(index < data.len());
 
@@ -752,22 +1032,22 @@ where
     let mut previous_pivot = None;
     while data.len() > 8 {
         let (u, v) = match index {
-            0 => partition_equal_min(data, 0),
-            i if i == data.len() - 1 => partition_equal_max(data, 0),
+            0 => partition_equal_min(data, 0, &mut lt),
+            i if i == data.len() - 1 => partition_equal_max(data, 0, &mut lt),
             _ => {
-                let (p, is_repeated) = choose_pivot(data, index, rng);
+                let (p, is_repeated) = choose_pivot(data, index, rng, &mut lt);
                 match previous_pivot {
                     // Test if the selected pivot is equal to a previous pivot from the left. In
                     // this case we know that the pivot is the minimum of the current slice.
-                    Some(was) if was == &data[p] => partition_equal_min(data, p),
+                    Some(was) if ge!(was, &data[p], lt) => partition_equal_min(data, p, &mut lt),
 
                     // If the selected pivot is equal to it's neighbor elements, use ternary
                     // partitioning, which puts the elements equal to the pivot in the
                     // middle. This is necessary to ensure that the algorithm terminates.
-                    _ if is_repeated => partition_equal(data, p),
+                    _ if is_repeated => partition_equal(data, p, &mut lt),
 
                     // Otherwise, use the default binary partioning.
-                    _ => partition_at(data, p),
+                    _ => partition_at(data, p, &mut lt),
                 }
             }
         };
@@ -787,7 +1067,7 @@ where
             return;
         }
     }
-    tinysort(data);
+    tinysort(data, &mut lt);
 }
 
 // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
