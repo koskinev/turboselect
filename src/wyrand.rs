@@ -156,16 +156,6 @@ impl WyRng {
         (self.u64() >> 32) as u32
     }
 
-    /// Returns a `u64` using `x` as the seed for the wyrand algorithm.
-    pub fn wyrand(x: u64) -> u64 {
-        let mut a = x;
-        let mut b = x ^ 0x_e703_7ed1_a0b4_28db;
-        let r = (a as u128) * (b as u128);
-        a = r as u64;
-        b = (r >> 64) as u64;
-        a ^ b
-    }
-
     /// Returns a `u64`.
     pub fn u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(0x_a076_1d64_78bd_642f);
@@ -175,6 +165,26 @@ impl WyRng {
     /// Returns a `u128`.
     pub fn u128(&mut self) -> u128 {
         (self.u64() as u128) << 64 | self.u64() as u128
+    }
+
+    /// Returns a `usize`.
+    pub fn usize(&mut self) -> usize {
+        match core::mem::size_of::<usize>() {
+            4 => self.u32() as usize,
+            8 => self.u64() as usize,
+            16 => self.u128() as usize,
+            _ => panic!("Unsupported usize size"),
+        }
+    }
+
+    /// Returns a `u64` using `x` as the seed for the wyrand algorithm.
+    fn wyrand(x: u64) -> u64 {
+        let mut a = x;
+        let mut b = x ^ 0x_e703_7ed1_a0b4_28db;
+        let r = (a as u128) * (b as u128);
+        a = r as u64;
+        b = (r >> 64) as u64;
+        a ^ b
     }
 }
 
