@@ -4,8 +4,8 @@ extern crate std;
 use std::{io::Write, println, vec::Vec};
 
 use crate::{
-    choose_pivot, partition_equal_max, partition_equal_min, sample, select_nth_unstable,
-    sort::sort_at, turboselect, wyrand::WyRng,
+    choose_pivot, isqrt, partition_at, partition_equal_max, partition_equal_min, sample,
+    select_nth_unstable, sort::sort_at, turboselect, wyrand::WyRng,
 };
 
 #[test]
@@ -204,33 +204,46 @@ fn nth_small() {
 #[ignore]
 fn pivots() {
     let mut rng = WyRng::new(123);
-    let count = 10_000;
+    let max = 10_000;
     let repeat = 10_000;
 
     let mut output = std::fs::File::create("misc/pivots.csv").unwrap();
     let mut results = Vec::new();
-    let mut total_cost = 0;
-    writeln!(results, "index,partition_at,cost").unwrap();
+    let mut total_cost = 0.;
+    writeln!(results, "index,partition_at,len,i,p,cost").unwrap();
+
     for _iter in 0..repeat {
-        let mut data: Vec<_> = (0..count).collect();
-        shuffle(&mut data, rng.as_mut());
+        let count = rng.bounded_usize(100, max);
+        // let mut data: Vec<_> = (0..count).collect();
+        // shuffle(&mut data, rng.as_mut());
+
+        let mut data = reversed_usizes(count, &mut rng);
 
         let index = rng.bounded_usize(0, count);
-        let min_cost = index.min(count - index);
 
         let (p, _) = choose_pivot(&mut data, index, rng.as_mut(), &mut usize::lt);
-        let pivot = data[p];
-        let cost = if pivot >= index {
-            pivot - min_cost
+        let (u, v) = partition_at(&mut data, p, &mut usize::lt);
+        let cost = if index < u {
+            u
+        } else if index <= v {
+            0
         } else {
-            (count - pivot) - min_cost
-        };
+            count - v
+        } as f64
+            / count as f64;
         total_cost += cost;
-        writeln!(results, "{index},{pivot},{cost}").unwrap(); // 1193
+        let partition_at = (u + v) / 2;
+        writeln!(
+            results,
+            "{index},{partition_at},{count},{i},{p},{cost}",
+            i = (index as f64) / (count as f64),
+            p = (partition_at as f64) / (count as f64)
+        )
+        .unwrap();
     }
-    let ratio = total_cost as f64 / repeat as f64;
-    println!("relative cost: {ratio:.3}",);
-    output.write_all(&results).unwrap();
+    let ratio = total_cost / repeat as f64;
+    println!("average cost: {ratio:.3}",);
+    output.write_all(&results).unwrap(); // 0.390
 }
 
 #[test]
@@ -248,19 +261,9 @@ fn reversed() {
     #[cfg(miri)]
     let repeat = 10;
 
-    /// Returns a vector of integers in the range `0..count`, in reversed order.
-    fn reversed_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
-        let mut data = Vec::with_capacity(count);
-        let max = rng.bounded_u32(0, count as u32);
-        for index in 0..count {
-            data.push((max * (count - index + 1) as u32) / (count as u32));
-        }
-        data
-    }
-
     for iter in 0..repeat {
         let index = (iter * count) / repeat;
-        let mut data = reversed_u32s(count, rng.as_mut());
+        let mut data = reversed_usizes(count, rng.as_mut());
         let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
         left.iter().enumerate().for_each(|(i, elem)| match i {
             i if elem > nth => panic!("iter {iter}: left[{i}] = {elem} > nth = {nth}"),
@@ -308,22 +311,9 @@ fn sawtooth() {
     #[cfg(miri)]
     let repeat = 10;
 
-    /// Returns a vector of `u32`s with a sawtooth pattern.
-    fn sawtooth_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
-        let mut data = Vec::with_capacity(count);
-        let count = count as u32;
-        let max_lenght = (count as f64).sqrt() as u32;
-        let length = rng.bounded_u32(max_lenght / 4 + 1, max_lenght);
-        for index in 0..count {
-            let x = index % length;
-            data.push(x);
-        }
-        data
-    }
-
     for iter in 0..repeat {
         let index = (iter * count) / repeat;
-        let mut data = sawtooth_u32s(count, rng.as_mut());
+        let mut data = sawtooth_usizes(count, rng.as_mut());
         let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
         assert!(left.iter().all(|elem| elem <= nth));
         assert!(right.iter().all(|elem| elem >= nth));
@@ -359,4 +349,40 @@ fn sorts() {
     sort_indexed::<3>();
     sort_indexed::<5>();
     sort_indexed::<7>();
+}
+
+#[test]
+#[cfg(feature = "std")]
+fn sqrts() {
+    for x in 0..1000 {
+        assert_eq!(isqrt(x), (x as f64).sqrt().floor() as usize);
+    }
+
+    let mut rng = WyRng::new(123);
+    for _ in 0..10000 {
+        let x = rng.usize();
+        assert_eq!(isqrt(x), (x as f64).sqrt().floor() as usize);
+    }
+}
+
+/// Returns a vector of integers in the range `0..count`, in reversed order.
+fn reversed_usizes(count: usize, rng: &mut WyRng) -> Vec<usize> {
+    let mut data = Vec::with_capacity(count);
+    let max = rng.bounded_usize(0, count);
+    for index in 0..count {
+        data.push((max * (count - index + 1)) / count);
+    }
+    data
+}
+
+/// Returns a vector of `u32`s with a sawtooth pattern.
+fn sawtooth_usizes(count: usize, rng: &mut WyRng) -> Vec<usize> {
+    let mut data = Vec::with_capacity(count);
+    let max_lenght = (count as f64).sqrt() as usize;
+    let length = rng.bounded_usize(max_lenght / 4 + 1, max_lenght);
+    for index in 0..count {
+        let x = index % length;
+        data.push(x);
+    }
+    data
 }
