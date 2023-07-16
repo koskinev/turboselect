@@ -147,7 +147,8 @@ fn turboselect_perf() {
             )
         };
 
-        let mut output = std::fs::File::create(format!("{label}.csv")).unwrap();
+        std::fs::create_dir_all("bench_results").unwrap();
+        let mut output = std::fs::File::create(format!("bench_results/{label}.csv")).unwrap();
         let mut results = Vec::new();
         writeln!(results, "target,len,percentile,nanosecs").unwrap();
         for len in lens {
