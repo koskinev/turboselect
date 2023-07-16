@@ -66,20 +66,6 @@ impl<T> Elem<T> {
 }
 
 /// Given two values `x` and `y`, and a comparator function that returns `true` if `x < y`,
-/// this macro returns `true` if `x == y`.
-///
-/// # Arguments
-///
-/// * `$x` - The first value to compare.
-/// * `$y` - The second value to compare.
-/// * `$lt` - The comparator function that returns `true` if `$x` is less than `$y`.
-macro_rules! eq {
-    ($x:expr, $y:expr, $lt:expr) => {
-        !(($lt)($x, $y)) && !($lt)($y, $x)
-    };
-}
-
-/// Given two values `x` and `y`, and a comparator function that returns `true` if `x < y`,
 /// this macro returns `true` if `x >= y`.
 ///
 /// # Arguments
@@ -122,21 +108,24 @@ where
         len if len <= 4096 => kth_of_nths::<7, _, _>(data, index, rng, lt),
         // Larger slices benefit from more accurate pivot selection.
         _ => {
-            let lt: &mut F = lt;
-            let count = ((3 * isqrt(len)) / 4).min(8192);
-
+            let count = ((3 * isqrt(len)) / 4).min(4096);
+            
             // Choose an index in the range `[0, count)`, biasing towards the middle of the
             // range. This increases the propability that we can recurse into the smaller partition.
+            const GAP: f64 = 0.01;
+            let sign = 1. - 2. * (index > data.len() / 2) as u64 as f64;
             let x = (index as f64) / data.len() as f64;
-            let y = sigmoid(x, 0.02, 0.6);
-            let k = (count as f64 * y) as usize;
-
+            let k = (count as f64 * (x + sign * GAP)) as usize;
+            
             // The pivot is the `kth` item in the sample.
             let sample = sample(data, count, rng);
             turboselect(sample, k, rng, lt);
 
-            let pivot = &sample[k];
-            let is_repeated = sample.iter().filter(|x| eq!(x, pivot, lt)).count() > count / 3;
+            let is_repeated = match k {
+                0 => ge!(&data[k], &data[k + 1], lt),
+                k if k == count - 1 => ge!(&data[k - 1], &data[k], lt),
+                _ => ge!(&data[k - 1], &data[k + 1], lt),
+            };
 
             (k, is_repeated)
         }
@@ -1061,22 +1050,6 @@ where
         return select_nth_by_key!(u32, data, index, f);
     }
     select_nth_by_key!(usize, data, index, f)
-}
-
-/// A sigmoid function that takes a value in the range `[0, 1]` and returns a value in the range
-/// `[y0, 1-y0]`. The function is symmetric around `0.5`. The slope at `0.5` is controlled by the
-/// `skew` parameter.
-fn sigmoid(x: f64, y0: f64, skew: f64) -> f64 {
-    debug_assert!((0.0..1.0).contains(&x));
-    debug_assert!((0.0..1.0).contains(&y0));
-    debug_assert!((0.0..1.0).contains(&skew));
-    let y1 = 1.0 - y0;
-    let askew = 1.0 - skew;
-    let mx = 1.0 - x;
-    y0 * (mx * mx * mx)
-        + (3. * skew) * (mx * mx * x)
-        + (3. * askew) * mx * (x * x)
-        + y1 * (x * x * x)
 }
 
 fn split_partition<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T, &mut [T]) {
