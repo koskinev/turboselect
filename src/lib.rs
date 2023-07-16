@@ -66,6 +66,20 @@ impl<T> Elem<T> {
 }
 
 /// Given two values `x` and `y`, and a comparator function that returns `true` if `x < y`,
+/// this macro returns `true` if `x == y`.
+///
+/// # Arguments
+///
+/// * `$x` - The first value to compare.
+/// * `$y` - The second value to compare.
+/// * `$lt` - The comparator function that returns `true` if `$x` is less than `$y`.
+macro_rules! eq {
+    ($x:expr, $y:expr, $lt:expr) => {
+        !(($lt)($x, $y)) && !($lt)($y, $x)
+    };
+}
+
+/// Given two values `x` and `y`, and a comparator function that returns `true` if `x < y`,
 /// this macro returns `true` if `x >= y`.
 ///
 /// # Arguments
@@ -105,38 +119,53 @@ where
         // For relatively small slices, we use a `kth-of-nths` strategy.
         len if len <= 256 => kth_of_nths::<3, _, _>(data, index, rng, lt),
         len if len <= 1024 => kth_of_nths::<5, _, _>(data, index, rng, lt),
-        len if len <= 8192 => kth_of_nths::<7, _, _>(data, index, rng, lt),
+        len if len <= 4096 => kth_of_nths::<7, _, _>(data, index, rng, lt),
         // Larger slices benefit from more accurate pivot selection.
         _ => {
-            const GAP: f64 = 0.01;
-            let sign = 1. - 2. * (index > data.len() / 2) as u64 as f64;
-            let count = match len {
-                len if len <= 65536 => 125,
-                len if len <= 1048576 => 500,
-                len if len <= 8388608 => 1000,
-                _ => 2000,
-            };
+            let lt: &mut F = lt;
+            let count = ((3 * isqrt(len)) / 4).min(8192);
 
             // Choose an index in the range `[0, count)`, biasing towards the middle of the
             // range. This increases the propability that we can recurse into the smaller partition.
             let x = (index as f64) / data.len() as f64;
-            let k = (count as f64 * (x + sign * GAP)) as usize;
-            let sample = sample(data, count, rng);
+            let y = sigmoid(x, 0.02, 0.6);
+            let k = (count as f64 * y) as usize;
 
             // The pivot is the `kth` item in the sample.
+            let sample = sample(data, count, rng);
             turboselect(sample, k, rng, lt);
 
-            // If the pivot is equal to either of it's neighbors, it is likely to have many
-            // duplicates.
-            let is_repeated = match k {
-                0 => ge!(&data[k], &data[k + 1], lt),
-                k if k == count - 1 => ge!(&data[k - 1], &data[k], lt),
-                _ => ge!(&data[k - 1], &data[k + 1], lt),
-            };
+            let pivot = &sample[k];
+            let is_repeated = sample.iter().filter(|x| eq!(x, pivot, lt)).count() > count / 3;
+
             (k, is_repeated)
         }
     };
     (p, is_repeated)
+}
+
+#[inline]
+// Integer square root, Newtons method. This is included to avoid relying on the standard library.
+fn isqrt(x: usize) -> usize {
+    #[cfg(not(std))]
+    {
+        if x <= 1 {
+            return x;
+        }
+        let s = usize::BITS / 2 - (x - 1).leading_zeros() / 2;
+        let mut g0 = 1 << s;
+        let mut g1 = (g0 + (x >> s)) >> 1;
+        while g1 < g0 {
+            g0 = g1;
+            g1 = (g0 + (x / g0)) >> 1;
+        }
+        g0
+    }
+
+    #[cfg(std)]
+    {
+        x.sqrt()
+    }
 }
 
 #[inline]
@@ -153,10 +182,12 @@ fn kth_of_nths<const N: usize, T, F>(
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let izi = |x| x as isize;
-    let uzi = |x| x as usize;
-
+    // Calculate:
+    // - `k`: sample index corresponding to the pivot location.
+    // - `g`: first element of the `N`-element group where the pivot is located.
     let len = data.len();
+    let k = ((N * N * index) / len) as isize;
+    let g = k - k % N as isize;
 
     // Take the sample and reorder it into `N` groups.
     let sample = sample(data, N * N, rng);
@@ -165,26 +196,23 @@ where
         sort_at(sample, pos, lt);
     }
 
-    // Calculate:
-    // - `k`: sample index corresponding to the pivot location.
-    // - `g`: first element of the `N`-element group where the pivot is located.
-    let k = izi((N * N * index) / len);
-    let g = k - k % izi(N);
-
     // Sort the group where the pivot is located.
-    let pos: [_; N] = array::from_fn(|i| uzi(g) + i);
+    let pos: [_; N] = array::from_fn(|i| g as usize + i);
     sort_at(sample, pos, lt);
 
     // Calculate:
-    // - `o`: the offset of the pivot from the group median. We scale the offset by `2` to keep it
-    //   near the median of the group.
-    // - `p`: the index of the pivot.
-    let o = (k - g - izi(N / 2)) / 2;
-    let p = uzi(g + o + izi(N / 2));
+    // - `o`: pivot's offset from the group median, scaled by 2 to keep the pivot near the median.
+    // - `p`: pivot's index
+    let o = (k - g - (N / 2) as isize) / 2;
+    let p = if index.abs_diff(len / 2) > len / 5 {
+        (g + o + (N / 2) as isize) as usize
+    } else {
+        g as usize + N / 2
+    };
 
     // Compare the pivot with the first element of the group. If they are equal, the pivot is
     // likely to have many duplicates.
-    let is_repeated = ge!(&data[uzi(g)], &data[p], lt);
+    let is_repeated = ge!(&data[g as usize], &data[p], lt);
     (p, is_repeated)
 }
 
@@ -1033,6 +1061,22 @@ where
         return select_nth_by_key!(u32, data, index, f);
     }
     select_nth_by_key!(usize, data, index, f)
+}
+
+/// A sigmoid function that takes a value in the range `[0, 1]` and returns a value in the range
+/// `[y0, 1-y0]`. The function is symmetric around `0.5`. The slope at `0.5` is controlled by the
+/// `skew` parameter.
+fn sigmoid(x: f64, y0: f64, skew: f64) -> f64 {
+    debug_assert!((0.0..1.0).contains(&x));
+    debug_assert!((0.0..1.0).contains(&y0));
+    debug_assert!((0.0..1.0).contains(&skew));
+    let y1 = 1.0 - y0;
+    let askew = 1.0 - skew;
+    let mx = 1.0 - x;
+    y0 * (mx * mx * mx)
+        + (3. * skew) * (mx * mx * x)
+        + (3. * askew) * mx * (x * x)
+        + y1 * (x * x * x)
 }
 
 fn split_partition<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T, &mut [T]) {
