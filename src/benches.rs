@@ -147,10 +147,11 @@ fn turboselect_perf() {
             )
         };
 
-        let mut output = std::fs::File::create(format!("bench_results/{label}.csv")).unwrap();
+        let mut output = std::fs::File::create(format!("{label}.csv")).unwrap();
+        let mut results = Vec::new();
+        writeln!(results, "target,len,percentile,nanosecs").unwrap();
         for len in lens {
             for p in percentiles {
-                let mut results = Vec::new();
                 let index = percentile(len, p);
                 let durations = compare(len, index);
                 let (our_tput, baseline_tput) = durations.throughputs(len);
@@ -159,16 +160,25 @@ fn turboselect_perf() {
                     "| {label:<18} | {len:<12} | {index:<11} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio:<5.03} |",
                 );
 
-                writeln!(results, "target,len,index,nanosecs").unwrap();
                 for duration in &durations.ours {
-                    writeln!(results, "ours,{len},{index},{duration}").unwrap();
+                    writeln!(
+                        results,
+                        "turboselect,{len},p{ptile},{duration}",
+                        ptile = 100. * p,
+                    )
+                    .unwrap();
                 }
                 for duration in &durations.baseline {
-                    writeln!(results, "baseline,{len},{index},{duration}").unwrap();
+                    writeln!(
+                        results,
+                        "core::slice,{len},p{ptile},{duration}",
+                        ptile = 100. * p,
+                    )
+                    .unwrap();
                 }
-                output.write_all(&results).unwrap();
             }
         }
+        output.write_all(&results).unwrap();
     }
 
     eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");
