@@ -5,7 +5,10 @@ use std::{io::Write, println, vec::Vec};
 
 use crate::{
     choose_pivot, isqrt, partition_at, partition_equal_max, partition_equal_min, sample,
-    select_nth_unstable, sort::sort_at, turboselect, wyrand::WyRng,
+    select_nth_unstable,
+    sort::{sort_at, tinysort},
+    select,
+    wyrand::WyRng,
 };
 
 #[test]
@@ -167,7 +170,7 @@ fn nth() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        turboselect(&mut data, index, rng.as_mut(), &mut usize::lt);
+        select(&mut data, index, rng.as_mut(), &mut usize::lt);
         let nth = &data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
             i if i < index && elem > nth => panic!("{} > {} at {}", elem, nth, i),
@@ -193,7 +196,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        turboselect(&mut data, index, &mut rng, &mut usize::lt);
+        select(&mut data, index, &mut rng, &mut usize::lt);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
@@ -362,6 +365,26 @@ fn sqrts() {
     for _ in 0..10000 {
         let x = rng.usize();
         assert_eq!(isqrt(x), (x as f64).sqrt().floor() as usize);
+    }
+}
+
+#[test]
+fn tinysorts() {
+    #[cfg(not(miri))]
+    let repeat = 1000;
+    #[cfg(miri)]
+    let repeat = 1;
+
+    let mut rng = WyRng::new(123);
+    let max_count = 64;
+    for _iter in 0..repeat {
+        let count = rng.bounded_usize(1, max_count);
+        let mut data: Vec<usize> = (0..count).collect();
+        shuffle(&mut data, &mut rng);
+        tinysort(&mut data, &mut usize::lt);
+        for i in 1..count {
+            assert!(data[i - 1] <= data[i]);
+        }
     }
 }
 
