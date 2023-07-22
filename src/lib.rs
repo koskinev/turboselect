@@ -109,17 +109,17 @@ where
         // Larger slices benefit from more accurate pivot selection.
         _ => {
             let count = ((3 * isqrt(len)) / 4).min(4096);
-            
+
             // Choose an index in the range `[0, count)`, biasing towards the middle of the
             // range. This increases the propability that we can recurse into the smaller partition.
             const GAP: f64 = 0.01;
             let sign = 1. - 2. * (index > data.len() / 2) as u64 as f64;
             let x = (index as f64) / data.len() as f64;
             let k = (count as f64 * (x + sign * GAP)) as usize;
-            
+
             // The pivot is the `kth` item in the sample.
             let sample = sample(data, count, rng);
-            turboselect(sample, k, rng, lt);
+            select(sample, k, rng, lt);
 
             let is_repeated = match k {
                 0 => ge!(&data[k], &data[k + 1], lt),
@@ -747,6 +747,63 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
     }
 }
 
+/// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
+/// and elements in `data[index..]` are greater than or equal to the pivot.
+///
+/// Panics if `index >= data.len()`.
+fn select<T, F>(mut data: &mut [T], mut index: usize, rng: &mut WyRng, lt: &mut F)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    assert!(index < data.len());
+
+    // If there are less than two elements, there is nothing to do. If `T` is a zero sized type, it
+    // cannot have any meaningful ordering, so we just return.
+    if data.len() < 2 || mem::size_of::<T>() == 0 {
+        return;
+    }
+
+    let mut previous_pivot = None;
+    while data.len() > 16 {
+        let (u, v) = match index {
+            0 => partition_equal_min(data, 0, lt),
+            i if i == data.len() - 1 => partition_equal_max(data, 0, lt),
+            _ => {
+                let (p, is_repeated) = choose_pivot(data, index, rng, lt);
+                match previous_pivot {
+                    // Test if the selected pivot is equal to a previous pivot from the left. In
+                    // this case we know that the pivot is the minimum of the current slice.
+                    Some(was) if ge!(was, &data[p], lt) => partition_equal_min(data, p, lt),
+
+                    // If the selected pivot is equal to it's neighbor elements, use ternary
+                    // partitioning, which puts the elements equal to the pivot in the
+                    // middle. This is necessary to ensure that the algorithm terminates.
+                    _ if is_repeated => partition_equal(data, p, lt),
+
+                    // Otherwise, use the default binary partioning.
+                    _ => partition_at(data, p, lt),
+                }
+            }
+        };
+        // Descend into the appropriate part of the slice or terminate if the pivot is in the
+        // correct position.
+        if index < u {
+            // Select the left part. We don't store the pivot, since all elements on the left
+            // are smaller than the pivot.
+            data = data[..u].as_mut();
+        } else if index > v {
+            // Select the right part. Elements on the right can be equal to the pivot,
+            // so we store it.
+            let (head, tail) = data.split_at_mut(v + 1);
+            (data, previous_pivot) = (tail, head.last());
+            index -= v + 1;
+        } else {
+            return;
+        }
+    }
+    tinysort(data, lt);
+}
+
 /// Reorder the slice such that the element at `index` is at its final sorted position.
 ///
 /// This reordering has the additional property that any value at position `i < index` will be
@@ -806,7 +863,7 @@ where
     } else if index == data.len() - 1 {
         partition_max(data, &mut T::lt);
     } else {
-        turboselect(data, index, rng.as_mut(), &mut T::lt);
+        select(data, index, rng.as_mut(), &mut T::lt);
     }
     split_partition(data, index)
 }
@@ -878,7 +935,7 @@ where
     } else if index == data.len() - 1 {
         partition_max(data, &mut lt);
     } else {
-        turboselect(data, index, rng.as_mut(), &mut lt);
+        select(data, index, rng.as_mut(), &mut lt);
     }
     split_partition(data, index)
 }
@@ -951,7 +1008,7 @@ where
     } else if index == data.len() - 1 {
         partition_max(data, &mut lt);
     } else {
-        turboselect(data, index, rng.as_mut(), &mut lt);
+        select(data, index, rng.as_mut(), &mut lt);
     }
     split_partition(data, index)
 }
@@ -1056,63 +1113,6 @@ fn split_partition<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T, &mut [
     let (left, rest) = data.split_at_mut(index);
     let (pivot, right) = rest.split_first_mut().unwrap();
     (left, pivot, right)
-}
-
-/// Partitions the slice so that elements in `data[..index]` are less than or equal to the pivot
-/// and elements in `data[index..]` are greater than or equal to the pivot.
-///
-/// Panics if `index >= data.len()`.
-fn turboselect<T, F>(mut data: &mut [T], mut index: usize, rng: &mut WyRng, lt: &mut F)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    assert!(index < data.len());
-
-    // If there are less than two elements, there is nothing to do. If `T` is a zero sized type, it
-    // cannot have any meaningful ordering, so we just return.
-    if data.len() < 2 || mem::size_of::<T>() == 0 {
-        return;
-    }
-
-    let mut previous_pivot = None;
-    while data.len() > 8 {
-        let (u, v) = match index {
-            0 => partition_equal_min(data, 0, lt),
-            i if i == data.len() - 1 => partition_equal_max(data, 0, lt),
-            _ => {
-                let (p, is_repeated) = choose_pivot(data, index, rng, lt);
-                match previous_pivot {
-                    // Test if the selected pivot is equal to a previous pivot from the left. In
-                    // this case we know that the pivot is the minimum of the current slice.
-                    Some(was) if ge!(was, &data[p], lt) => partition_equal_min(data, p, lt),
-
-                    // If the selected pivot is equal to it's neighbor elements, use ternary
-                    // partitioning, which puts the elements equal to the pivot in the
-                    // middle. This is necessary to ensure that the algorithm terminates.
-                    _ if is_repeated => partition_equal(data, p, lt),
-
-                    // Otherwise, use the default binary partioning.
-                    _ => partition_at(data, p, lt),
-                }
-            }
-        };
-        // Descend into the appropriate part of the slice or terminate if the pivot is in the
-        // correct position.
-        if index < u {
-            // Select the left part. We don't store the pivot, since all elements on the left
-            // are smaller than the pivot.
-            data = data[..u].as_mut();
-        } else if index > v {
-            // Select the right part. Elements on the right can be equal to the pivot,
-            // so we store it.
-            let (head, tail) = data.split_at_mut(v + 1);
-            (data, previous_pivot) = (tail, head.last());
-            index -= v + 1;
-        } else {
-            return;
-        }
-    }
-    tinysort(data, lt);
 }
 
 // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
