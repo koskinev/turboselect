@@ -1,9 +1,9 @@
 #[cfg(feature = "std")]
 extern crate std;
 
-use std::{eprintln, format, vec::Vec};
+use std::{eprintln, vec::Vec};
 
-use crate::{select_nth_unstable, wyrand::WyRng};
+use crate::{select_nth_unstable, sort::tinysort, wyrand::WyRng};
 
 /// Returns a random boolean vector with `count` elements.
 fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
@@ -147,8 +147,8 @@ fn turboselect_perf() {
             )
         };
 
-        std::fs::create_dir_all("bench_results").unwrap();
-        let mut output = std::fs::File::create(format!("bench_results/{label}.csv")).unwrap();
+        // std::fs::create_dir_all("bench_results").unwrap();
+        // let mut output = std::fs::File::create(format!("bench_results/{label}.csv")).unwrap();
         let mut results = Vec::new();
         writeln!(results, "target,len,percentile,nanosecs").unwrap();
         for len in lens {
@@ -179,14 +179,68 @@ fn turboselect_perf() {
                 }
             }
         }
-        output.write_all(&results).unwrap();
+        // output.write_all(&results).unwrap();
+    }
+
+    eprintln!("Benchmarking tinysort against core::slice::sort_unstable. The runs are randomly interleaved.");
+    eprintln!("Data preparation is ignored in the timing.\n");
+
+    eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
+    eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
+
+    run("random_u32", random_u32s);
+    run("sawtooth_u32", sawtooth_u32s);
+    run("reversed_u32", reversed_u32s);
+    run("randomdups_u32", random_u32s_dups);
+    run("random_bool", random_bools);
+}
+
+#[test]
+#[ignore]
+fn tinysort_perf() {
+    // cargo test -r tinysort_perf -- --nocapture --ignored
+    // cargo flamegraph --unit-test -- tinysort_perf --ignored
+
+    fn run<P, T>(label: &str, mut prep: P)
+    where
+        P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
+        T: Ord,
+    {
+        let lens = [4, 8, 16, 32, 64, 128, 256];
+        let runs = |len: usize| 2_000_000 / ((len as f32).sqrt() as usize);
+        let mut rng = WyRng::new(123456789);
+
+        let mut compare = |len| {
+            bench(
+                || prep(len, rng.as_mut()),
+                |data| {
+                    tinysort(data, &mut T::lt);
+                },
+                |data| data.sort_unstable(),
+                |data| data.windows(2).all(|w| w[0] <= w[1]),
+                runs(len),
+            )
+        };
+
+        for len in lens {
+            let durations = compare(len);
+            let (our_tput, baseline_tput) = durations.throughputs(len);
+            let ratio = our_tput / baseline_tput;
+            eprintln!(
+                    "| {label:<18} | {len:<12} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio:<5.03} |",
+                );
+        }
     }
 
     eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");
     eprintln!("Data preparation is ignored in the timing.\n");
 
-    eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
-    eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
+    eprintln!(
+        "| data type          | slice length | throughput, M el/s   | baseline, M el /s  | ratio |"
+    );
+    eprintln!(
+        "| ------------------ | ------------ | -------------------- | ------------------ | ----- |"
+    );
 
     run("random_u32", random_u32s);
     run("sawtooth_u32", sawtooth_u32s);
