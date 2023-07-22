@@ -83,6 +83,8 @@ impl WyRng {
 
     /// Returns a `u64` in the range `[low, high)`.
     pub fn bounded_u64(&mut self, low: u64, high: u64) -> u64 {
+        debug_assert!(low < high);
+
         let range = high - low;
         let mut x = self.u64();
         let mut m = (x as u128) * (range as u128);
