@@ -93,7 +93,6 @@ macro_rules! le {
     };
 }
 
-
 /// An enumeration representing the sort order of a slice.
 #[repr(isize)]
 enum SortOrder {
@@ -114,7 +113,6 @@ impl From<isize> for SortOrder {
         }
     }
 }
-
 
 /// Selects the pivot element for partitioning the slice. Returns `(p, is_repeated)` where `p` is
 /// the index of the pivot element and `is_repeated` is a boolean indicating if the pivot is likely
@@ -776,7 +774,7 @@ where
     }
 
     // If the slice is likely sorted, try partitioning with the pivot at the index (ascending) or
-    // slightly before the corresponding index from the back (descending). 
+    // slightly before the corresponding index from the back (descending).
     let likely_sorted = match likely_order(data, rng, lt) {
         SortOrder::Ascending => true,
         SortOrder::Descending => {
