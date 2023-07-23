@@ -87,5 +87,7 @@ Kiwiel suggests a dual-pivot partitioning scheme, but it is not used, since it t
 ## References
 
 [1] Alexandrescu, Andrei. (2017). Fast Deterministic Selection. [10.4230/LIPIcs.SEA.2017.24](https://dx.doi.org/10.4230/LIPIcs.SEA.2017.24). 
+
 [2] Floyd, Robert & Rivest, Ronald. (1975). Algorithm 489: The algorithm SELECT—for finding the ith smallest of n elements. Communications of the ACM. 18. [10.1145/360680.360694](https://dx.doi.org/10.1145/360680.360694). 
+
 [3] Kiwiel, Krzysztof. (2005). On Floyd and Rivest's SELECT algorithm. Theoretical Computer Science. 347. 214-238. [10.1016/j.tcs.2005.06.032](https://dx.doi.org/10.1016/j.tcs.2005.06.032).  
