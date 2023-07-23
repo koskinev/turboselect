@@ -33,7 +33,8 @@ fn random_u32s_dups(count: usize, rng: &mut WyRng) -> Vec<u32> {
     data
 }
 
-/// Returns a vector of integers in the range `0..count`, in reversed order.
+/// Returns a vector of integers in reversed order. The maximum is randomized and in the range
+/// `0..count`.
 fn reversed_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
     let mut data = Vec::with_capacity(count);
     let max = rng.bounded_u32(0, count as u32);
@@ -52,6 +53,17 @@ fn sawtooth_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
     for index in 0..count {
         let x = index % length;
         data.push(x);
+    }
+    data
+}
+
+/// Returns a vector of integers in sorted order. The maximum is randomized and in the range
+/// `0..count`.
+fn sorted_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
+    let mut data = Vec::with_capacity(count);
+    let max = rng.bounded_u32(0, count as u32);
+    for index in 0..count {
+        data.push((max * index as u32) / (count as u32));
     }
     data
 }
@@ -124,7 +136,9 @@ fn turboselect_perf() {
     {
         use std::io::Write;
 
-        let lens = [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
+        let lens = [
+            1_000, 10_000, 100_000, 1_000_000, // 10_000_000, 100_000_000
+        ];
         let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
         let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
         let runs = |len: usize| 1_000_000 / ((len as f32).sqrt() as usize);
@@ -189,6 +203,7 @@ fn turboselect_perf() {
     eprintln!("| ------------------ | ------------ | ----------- | -------------------- | ------------------ | ----- |");
 
     run("random_u32", random_u32s);
+    run("sorted_u32", sorted_u32s);
     run("sawtooth_u32", sawtooth_u32s);
     run("reversed_u32", reversed_u32s);
     run("randomdups_u32", random_u32s_dups);
