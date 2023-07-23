@@ -17,7 +17,7 @@ use core::{
     array,
     cmp::{self, Ordering},
     mem::{self, ManuallyDrop, MaybeUninit},
-    ops::{Deref, DerefMut, Range},
+    ops::{ControlFlow, Deref, DerefMut, Range},
     ptr,
 };
 use sort::{sort_at, tinysort};
@@ -92,6 +92,29 @@ macro_rules! le {
         !($lt)($y, $x)
     };
 }
+
+
+/// An enumeration representing the sort order of a slice.
+#[repr(isize)]
+enum SortOrder {
+    /// The slice is sorted in ascending order.
+    Ascending = 1,
+    /// The slice is sorted in descending order.
+    Descending = -1,
+    /// The slice is not sorted.
+    Unsorted = 0,
+}
+
+impl From<isize> for SortOrder {
+    fn from(value: isize) -> Self {
+        match value {
+            1 => Self::Ascending,
+            -1 => Self::Descending,
+            _ => Self::Unsorted,
+        }
+    }
+}
+
 
 /// Selects the pivot element for partitioning the slice. Returns `(p, is_repeated)` where `p` is
 /// the index of the pivot element and `is_repeated` is a boolean indicating if the pivot is likely
@@ -203,6 +226,35 @@ where
     // likely to have many duplicates.
     let is_repeated = ge!(&data[g as usize], &data[p], lt);
     (p, is_repeated)
+}
+
+/// Samples pairs of elements from the slice and checks if it is likely sorted in ascending or
+/// descending order, or if it is unsorted. Returns `SortOrder::Ascending` if the slice is sorted
+/// in ascending order, `SortOrder::Descending` if it is sorted in descending order and
+/// `SortOrder::Unsorted` if it is not sorted.
+fn likely_order<T, F>(data: &[T], rng: &mut WyRng, lt: &mut F) -> SortOrder
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    const SAMPLE: usize = 32;
+    let len = data.len();
+    let mut test = || {
+        let a = rng.bounded_usize(0, len);
+        let b = rng.bounded_usize(0, len);
+        let (x, y) = (a.min(b), a.max(b));
+        lt(&data[x], &data[y]) as isize - lt(&data[y], &data[x]) as isize
+    };
+    let mut sample = core::iter::repeat(()).map(|_| (test)()).take(SAMPLE);
+    let order = sample.find(|&order| order != 0);
+    if let Some(preorder) = order {
+        if sample.all(|o| o == preorder || o == 0) {
+            preorder.into()
+        } else {
+            SortOrder::Unsorted
+        }
+    } else {
+        SortOrder::Ascending
+    }
 }
 
 /// Partitions `data` into three parts using the element at `index` as the pivot. Returns `(u, v)`,
@@ -375,33 +427,6 @@ where
         }
     }
     (0, width(l, dup))
-}
-
-/// Puts the maximum elements at the end of the slice and returns the indices of the first and
-/// last elements equal to the maximum. The `init` argument is the index of the element to use as
-/// the initial maximum. Returns `(u, v)`, where `u` is the number of elements smaller than the
-/// maximum, and `v` is the index of the last element in the slice.
-///
-/// The resulting partitioning is as follows:
-///
-/// ```text
-/// ┌─────────┬──────────┐
-/// │ x < max │ x == max │
-/// └─────────┴──────────┘
-///          u          v == len - 1
-/// ```
-fn partition_equal_max<T, F>(data: &mut [T], init: usize, lt: &mut F) -> (usize, usize)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let len = data.len();
-    let (_, v) = partition_equal_min(data, init, &mut |x, y| lt(y, x));
-    let count = (v + 1).min(len - v - 1);
-
-    let (head, right) = data.split_at_mut(len - count);
-    let (left, _) = head.split_at_mut(count);
-    left.swap_with_slice(right);
-    (len - v - 1, len - 1)
 }
 
 /// Partitions `data` into elements smaller than `pivot`, followed by elements greater than or equal
@@ -678,38 +703,6 @@ where
     }
 }
 
-/// Finds the minimum element and puts it at the beginning of the slice.
-fn partition_min<T, F>(data: &mut [T], lt: &mut F)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let (min, _) = data
-        .iter()
-        .enumerate()
-        .min_by(|&(_, x), &(_, y)| match lt(x, y) {
-            true => Ordering::Less,
-            false => Ordering::Greater,
-        })
-        .unwrap();
-    data.swap(0, min);
-}
-
-/// Finds the maximum element and puts it at the end of the slice.
-fn partition_max<T, F>(data: &mut [T], lt: &mut F)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let (max, _) = data
-        .iter()
-        .enumerate()
-        .max_by(|&(_, x), &(_, y)| match lt(y, x) {
-            true => Ordering::Less,
-            false => Ordering::Greater,
-        })
-        .unwrap();
-    data.swap(max, data.len() - 1);
-}
-
 /// Samples `count` elements randomly and places them into the beginning of the slice. Returns the
 /// sample as a slice. Panics if `count > data.len()` or `data.len() == 0`.
 fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T] {
@@ -757,17 +750,57 @@ where
 {
     assert!(index < data.len());
 
-    // If there are less than two elements, there is nothing to do. If `T` is a zero sized type, it
-    // cannot have any meaningful ordering, so we just return.
-    if data.len() < 2 || mem::size_of::<T>() == 0 {
-        return;
+    fn descend<'a, T>(
+        mut data: &'a mut [T],
+        mut index: usize,
+        u: usize,
+        v: usize,
+        mut previous_pivot: Option<&'a T>,
+    ) -> ControlFlow<(), (&'a mut [T], usize, Option<&'a T>)> {
+        // Descend into the appropriate part of the slice or terminate if the pivot is in the
+        // correct position.
+        if index < u {
+            // Select the left part. We don't store the pivot, since all elements on the left
+            // are smaller than the pivot.
+            data = data[..u].as_mut();
+        } else if index > v {
+            // Select the right part. Elements on the right can be equal to the pivot,
+            // so we store it.
+            let (head, tail) = data.split_at_mut(v + 1);
+            (data, previous_pivot) = (tail, head.last());
+            index -= v + 1;
+        } else {
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue((data, index, previous_pivot))
     }
 
+    // If the slice is likely sorted, try partitioning with the pivot at the index (ascending) or
+    // slightly before the corresponding index from the back (descending). 
+    let likely_sorted = match likely_order(data, rng, lt) {
+        SortOrder::Ascending => true,
+        SortOrder::Descending => {
+            let gap = index.abs_diff(data.len()) / 128;
+            let pivot = (data.len() - index - 1).saturating_sub(gap);
+            data.swap(index, pivot);
+            true
+        }
+        SortOrder::Unsorted => false,
+    };
+
     let mut previous_pivot = None;
+    if likely_sorted {
+        let (u, v) = partition_at(data, index, lt);
+        match descend(data, index, u, v, previous_pivot) {
+            ControlFlow::Continue(result) => (data, index, previous_pivot) = result,
+            ControlFlow::Break(_) => return,
+        }
+    }
+
     while data.len() > 16 {
         let (u, v) = match index {
-            0 => partition_equal_min(data, 0, lt),
-            i if i == data.len() - 1 => partition_equal_max(data, 0, lt),
+            0 => select_min(data, lt),
+            i if i == data.len() - 1 => select_max(data, lt),
             _ => {
                 let (p, is_repeated) = choose_pivot(data, index, rng, lt);
                 match previous_pivot {
@@ -785,23 +818,161 @@ where
                 }
             }
         };
-        // Descend into the appropriate part of the slice or terminate if the pivot is in the
-        // correct position.
-        if index < u {
-            // Select the left part. We don't store the pivot, since all elements on the left
-            // are smaller than the pivot.
-            data = data[..u].as_mut();
-        } else if index > v {
-            // Select the right part. Elements on the right can be equal to the pivot,
-            // so we store it.
-            let (head, tail) = data.split_at_mut(v + 1);
-            (data, previous_pivot) = (tail, head.last());
-            index -= v + 1;
-        } else {
-            return;
+        match descend(data, index, u, v, previous_pivot) {
+            ControlFlow::Continue(result) => (data, index, previous_pivot) = result,
+            ControlFlow::Break(_) => return,
         }
     }
     tinysort(data, lt);
+}
+
+/// Finds the minimum element and puts it at the beginning of the slice.
+fn select_min<T, F>(data: &mut [T], lt: &mut F) -> (usize, usize)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    // If the slice is empty or it has only one element, there is nothing to do.
+    if data.len() < 2 {
+        return (0, data.len() - 1);
+    }
+
+    // Copy the initial minimum to the stack
+    let (head, tail) = data.split_first_mut().unwrap();
+    // SAFETY: `head` is not used after this point.
+    let mut min = unsafe { Elem::new(head) };
+
+    let Range { start: l, end: r } = tail.as_mut_ptr_range();
+    let mut elem = l;
+
+    // Setup the offsets array.
+    const BLOCK: usize = 64;
+    let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
+    let mut start = offsets.as_mut_ptr().cast();
+    let mut end: *mut u8 = start;
+
+    while elem < r {
+        // Scan the next block.
+        let block = cmp::min(BLOCK, width(elem, r));
+        unsafe {
+            // Scan the block and store offsets to the elements that satisfy `elem <= min`.
+            // SAFETY: The unsafety operations below involve the usage of the `offset`.
+            // According to the conditions required by the function, we satisfy them
+            // because:
+            // 1. `offsets` is stack-allocated, and thus considered separate allocated object.
+            // 2. The comparison returns a `bool`. Casting a `bool` will never overflow `isize`.
+            // 3. We have guaranteed that `block` will be `<= BLOCK`. Plus, `end` was initially set
+            //    to the begin pointer of `offsets` which was declared on the stack. Thus, we know
+            //    that even in the worst case (all comparisons return true) we will only be at most
+            //    1 byte pass the end
+            //
+            // Another unsafety operation here is dereferencing `elem`. However, `elem` was
+            // initially the begin pointer to the slice which is always valid.
+            for offset in 0..block {
+                end.write(offset as u8);
+                let is_lt = lt(&*elem.add(offset), &*min);
+                end = end.add(is_lt as usize);
+            }
+            // Scan the found elements
+            for _ in 0..width(start, end) {
+                // SAFETY: We know that the element is in bounds because we just scanned it.
+                let next = elem.add(*start as usize);
+                if lt(&*next, &*min) {
+                    // We found a new minimum.
+                    // SAFETY: `next` and `min` are both valid and they cannot overlap because
+                    // `min` is allocated on the stack, while `next` points to an element of the
+                    // slice.
+                    ptr::swap_nonoverlapping(next, &mut *min, 1);
+                }
+                // SAFETY: `start` is guaranteed to be in bounds, since `width(start, end) <=
+                // BLOCK`.
+                start = start.add(1);
+            }
+            elem = elem.add(block);
+            start = offsets.as_mut_ptr().cast();
+            end = start;
+        }
+    }
+
+    // let (min, _) = data
+    //     .iter()
+    //     .enumerate()
+    //     .min_by(|&(_, x), &(_, y)| match lt(x, y) {
+    //         true => Ordering::Less,
+    //         false => Ordering::Greater,
+    //     })
+    //     .unwrap();
+    // data.swap(0, min);
+
+    (0, 0)
+}
+
+/// Finds the maximum element and puts it at the end of the slice.
+fn select_max<T, F>(data: &mut [T], lt: &mut F) -> (usize, usize)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    // If the slice is empty or it has only one element, there is nothing to do.
+    if data.len() < 2 {
+        return (0, data.len() - 1);
+    }
+
+    // Copy the initial minimum to the stack
+    let (pivot, rest) = data.split_last_mut().unwrap();
+    // SAFETY: `pivot` is not used after this point.
+    let mut max = unsafe { Elem::new(pivot) };
+
+    let Range { start: l, end: r } = rest.as_mut_ptr_range();
+    let mut elem = l;
+
+    // Setup the offsets array.
+    const BLOCK: usize = 64;
+    let mut offsets = [MaybeUninit::<u8>::uninit(); BLOCK];
+    let mut start = offsets.as_mut_ptr().cast();
+    let mut end: *mut u8 = start;
+
+    while elem < r {
+        // Scan the next block.
+        let block = cmp::min(BLOCK, width(elem, r));
+        unsafe {
+            // Scan the block and store offsets to the elements that satisfy `elem <= min`.
+            // SAFETY: The unsafety operations below involve the usage of the `offset`.
+            // According to the conditions required by the function, we satisfy them
+            // because:
+            // 1. `offsets` is stack-allocated, and thus considered separate allocated object.
+            // 2. The comparison returns a `bool`. Casting a `bool` will never overflow `isize`.
+            // 3. We have guaranteed that `block` will be `<= BLOCK`. Plus, `end` was initially set
+            //    to the begin pointer of `offsets` which was declared on the stack. Thus, we know
+            //    that even in the worst case (all comparisons return true) we will only be at most
+            //    1 byte pass the end
+            //
+            // Another unsafety operation here is dereferencing `elem`. However, `elem` was
+            // initially the begin pointer to the slice which is always valid.
+            for offset in 0..block {
+                end.write(offset as u8);
+                let is_gt = lt(&*max, &*elem.add(offset));
+                end = end.add(is_gt as usize);
+            }
+            // Scan the found elements
+            for _ in 0..width(start, end) {
+                // SAFETY: We know that the element is in bounds because we just scanned it.
+                let next = elem.add(*start as usize);
+                if lt(&*max, &*next) {
+                    // We found a new minimum.
+                    // SAFETY: `next` and `min` are both valid and they cannot overlap because
+                    // `min` is allocated on the stack, while `next` points to an element of the
+                    // slice.
+                    ptr::swap_nonoverlapping(next, &mut *max, 1);
+                }
+                // SAFETY: `start` is guaranteed to be in bounds, since `width(start, end) <=
+                // BLOCK`.
+                start = start.add(1);
+            }
+            elem = elem.add(block);
+            start = offsets.as_mut_ptr().cast();
+            end = start;
+        }
+    }
+    (data.len() - 1, data.len() - 1)
 }
 
 /// Reorder the slice such that the element at `index` is at its final sorted position.
@@ -850,6 +1021,12 @@ pub fn select_nth_unstable<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T
 where
     T: Ord,
 {
+    // If there are less than two elements, there is nothing to do. If `T` is a zero sized type, it
+    // cannot have any meaningful ordering, so we just return.
+    if data.len() < 2 || mem::size_of::<T>() == 0 {
+        return split_partition(data, index);
+    }
+
     #[cfg(not(debug_assertions))]
     // Use the address of the last element as the seed for the random number generator.
     let seed = data.as_mut_ptr() as u64 + data.len() as u64;
@@ -859,9 +1036,9 @@ where
 
     let mut rng = WyRng::new(seed);
     if index == 0 {
-        partition_min(data, &mut T::lt);
+        select_min(data, &mut T::lt);
     } else if index == data.len() - 1 {
-        partition_max(data, &mut T::lt);
+        select_max(data, &mut T::lt);
     } else {
         select(data, index, rng.as_mut(), &mut T::lt);
     }
@@ -920,6 +1097,12 @@ pub fn select_nth_unstable_by<T, F>(
 where
     F: FnMut(&T, &T) -> Ordering,
 {
+    // If there are less than two elements, there is nothing to do. If `T` is a zero sized type, it
+    // cannot have any meaningful ordering, so we just return.
+    if data.len() < 2 || mem::size_of::<T>() == 0 {
+        return split_partition(data, index);
+    }
+
     #[cfg(not(debug_assertions))]
     // Use the address of the last element as the seed for the random number generator.
     let seed = data.as_mut_ptr() as u64 + data.len() as u64;
@@ -931,9 +1114,9 @@ where
     let mut lt = |x: &T, y: &T| compare(x, y) == Ordering::Less;
 
     if index == 0 {
-        partition_min(data, &mut lt);
+        select_min(data, &mut lt);
     } else if index == data.len() - 1 {
-        partition_max(data, &mut lt);
+        select_max(data, &mut lt);
     } else {
         select(data, index, rng.as_mut(), &mut lt);
     }
@@ -993,6 +1176,12 @@ where
     F: FnMut(&T) -> K,
     K: Ord,
 {
+    // If there are less than two elements, there is nothing to do. If `T` is a zero sized type, it
+    // cannot have any meaningful ordering, so we just return.
+    if data.len() < 2 || mem::size_of::<T>() == 0 {
+        return split_partition(data, index);
+    }
+
     #[cfg(not(debug_assertions))]
     // Use the address of the last element as the seed for the random number generator.
     let seed = data.as_mut_ptr() as u64 + data.len() as u64;
@@ -1004,9 +1193,9 @@ where
     let mut lt = |x: &T, y: &T| f(x).lt(&f(y));
 
     if index == 0 {
-        partition_min(data, &mut lt);
+        select_min(data, &mut lt);
     } else if index == data.len() - 1 {
-        partition_max(data, &mut lt);
+        select_max(data, &mut lt);
     } else {
         select(data, index, rng.as_mut(), &mut lt);
     }
