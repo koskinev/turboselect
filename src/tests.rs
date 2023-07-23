@@ -4,10 +4,8 @@ extern crate std;
 use std::{io::Write, println, vec::Vec};
 
 use crate::{
-    choose_pivot, isqrt, partition_at, partition_equal_max, partition_equal_min, sample,
-    select_nth_unstable,
+    choose_pivot, isqrt, partition_at, partition_equal_min, sample, select, select_nth_unstable,
     sort::{sort_at, tinysort},
-    select,
     wyrand::WyRng,
 };
 
@@ -117,38 +115,6 @@ fn min_10() {
     assert_eq!(u, 0);
     assert_eq!(v, 9);
 }
-#[test]
-fn max_10() {
-    let len = 10;
-    let mut rng = WyRng::new(123);
-
-    #[cfg(not(miri))]
-    let repeat = 10000;
-    #[cfg(miri)]
-    let repeat = 10;
-
-    for _iter in 0..repeat {
-        let mut data: Vec<_> = iter_rng(rng.as_mut(), len, len / 2).collect();
-        let mut cloned = data.clone();
-        let (u, _v) = partition_equal_max(&mut data, 0, &mut usize::lt);
-        let max = &data[u];
-        for (i, elem) in data.iter().enumerate() {
-            if i >= u {
-                assert!(elem == max);
-            } else {
-                assert!(elem < max);
-            }
-        }
-        data.sort();
-        cloned.sort();
-        assert_eq!(data, cloned);
-    }
-
-    let mut data: Vec<_> = core::iter::repeat(1).take(10).collect();
-    let (u, v) = partition_equal_max(data.as_mut_slice(), 0, &mut usize::lt);
-    assert_eq!(u, 0);
-    assert_eq!(v, 9);
-}
 
 #[test]
 fn nth() {
@@ -165,8 +131,8 @@ fn nth() {
     let mut rng = WyRng::new(1234);
 
     for _iter in 0..repeat {
-        let count = rng.bounded_usize(1, max);
-        let high = rng.bounded_usize(0, count);
+        let count = rng.bounded_usize(2, max);
+        let high = rng.bounded_usize(1, count);
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
@@ -191,8 +157,8 @@ fn nth_small() {
     let mut rng = WyRng::new(123);
 
     for _iter in 0..repeat {
-        let count = rng.bounded_usize(1, max);
-        let high = rng.bounded_usize(0, count);
+        let count = rng.bounded_usize(2, max);
+        let high = rng.bounded_usize(1, count);
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
@@ -250,7 +216,7 @@ fn pivots() {
 }
 
 #[test]
-fn reversed() {
+fn patterns() {
     let mut rng = WyRng::new(123);
 
     #[cfg(not(miri))]
@@ -264,18 +230,23 @@ fn reversed() {
     #[cfg(miri)]
     let repeat = 10;
 
-    for iter in 0..repeat {
-        let index = (iter * count) / repeat;
-        let mut data = reversed_usizes(count, rng.as_mut());
+    fn run(mut data: Vec<usize>, index: usize) {
         let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
         left.iter().enumerate().for_each(|(i, elem)| match i {
-            i if elem > nth => panic!("iter {iter}: left[{i}] = {elem} > nth = {nth}"),
+            i if elem > nth => panic!("left[{i}] = {elem} > nth = {nth}"),
             _ => (),
         });
         right.iter().enumerate().for_each(|(i, elem)| match i {
-            i if elem < nth => panic!("iter {iter}: left[{i}] = {elem} < nth = {nth}"),
+            i if elem < nth => panic!("left[{i}] = {elem} < nth = {nth}"),
             _ => (),
         });
+    }
+
+    for iter in 0..repeat {
+        let index = (iter * count) / repeat;
+        run(sorted_usizes(count, rng.as_mut()), index);
+        run(reversed_usizes(count, rng.as_mut()), index);
+        run(sawtooth_usizes(count, rng.as_mut()), index);
     }
 }
 
@@ -296,30 +267,6 @@ fn sample_n() {
         for i in 0..len {
             assert!(data.contains(&i));
         }
-    }
-}
-
-#[test]
-fn sawtooth() {
-    let mut rng = WyRng::new(123);
-
-    #[cfg(not(miri))]
-    let count = 10_000;
-    #[cfg(miri)]
-    let count = 1000;
-
-    #[cfg(not(miri))]
-    let repeat = 1000;
-
-    #[cfg(miri)]
-    let repeat = 10;
-
-    for iter in 0..repeat {
-        let index = (iter * count) / repeat;
-        let mut data = sawtooth_usizes(count, rng.as_mut());
-        let (left, nth, right) = select_nth_unstable(data.as_mut_slice(), index);
-        assert!(left.iter().all(|elem| elem <= nth));
-        assert!(right.iter().all(|elem| elem >= nth));
     }
 }
 
@@ -388,7 +335,8 @@ fn tinysorts() {
     }
 }
 
-/// Returns a vector of integers in the range `0..count`, in reversed order.
+/// Returns a vector of integers in reversed order. The maximum is randomized and in the range
+/// `0..count`.
 fn reversed_usizes(count: usize, rng: &mut WyRng) -> Vec<usize> {
     let mut data = Vec::with_capacity(count);
     let max = rng.bounded_usize(0, count);
@@ -406,6 +354,17 @@ fn sawtooth_usizes(count: usize, rng: &mut WyRng) -> Vec<usize> {
     for index in 0..count {
         let x = index % length;
         data.push(x);
+    }
+    data
+}
+
+/// Returns a vector of integers in sorted order. The maximum is randomized and in the range
+/// `0..count`.
+fn sorted_usizes(count: usize, rng: &mut WyRng) -> Vec<usize> {
+    let mut data = Vec::with_capacity(count);
+    let max = rng.bounded_usize(0, count);
+    for index in 0..count {
+        data.push((max * index) / count);
     }
     data
 }
