@@ -3,6 +3,8 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+mod math;
+
 #[cfg(feature = "std")]
 #[cfg(test)]
 mod benches;
@@ -20,8 +22,10 @@ use core::{
     ops::{ControlFlow, Deref, DerefMut, Range},
     ptr,
 };
+use math::{ceil, lerp, sqrt};
 use sort::{sort_at, tinysort};
 use wyrand::WyRng;
+
 
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
 struct Elem<T> {
@@ -93,6 +97,7 @@ macro_rules! le {
     };
 }
 
+#[derive(PartialEq, Eq)]
 /// An enumeration representing the sort order of a slice.
 #[repr(isize)]
 enum SortOrder {
@@ -121,60 +126,25 @@ fn choose_pivot<T, F>(data: &mut [T], index: usize, rng: &mut WyRng, lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let len = data.len();
-    let (p, is_repeated) = match data.len() {
+    match data.len() {
         // For relatively small slices, we use a `kth-of-nths` strategy.
         len if len <= 256 => kth_of_nths::<3, _, _>(data, index, rng, lt),
         len if len <= 1024 => kth_of_nths::<5, _, _>(data, index, rng, lt),
         len if len <= 4096 => kth_of_nths::<7, _, _>(data, index, rng, lt),
         // Larger slices benefit from more accurate pivot selection.
-        _ => {
-            let count = ((3 * isqrt(len)) / 4).min(4096);
-
-            // Choose an index in the range `[0, count)`, biasing towards the middle of the
-            // range. This increases the propability that we can recurse into the smaller partition.
-            const GAP: f64 = 0.01;
-            let sign = 1. - 2. * (index > data.len() / 2) as u64 as f64;
-            let x = (index as f64) / data.len() as f64;
-            let k = (count as f64 * (x + sign * GAP)) as usize;
-
-            // The pivot is the `kth` item in the sample.
-            let sample = sample(data, count, rng);
-            select(sample, k, rng, lt);
-
+        len => {
+            const ALPHA: f64 = 0.75;
+            let count = ceil(ALPHA * sqrt(len as f64)) as usize;
+            let index = nudge(index, len);
+            let k = (count * index) / len;
+            select(sample(data, count, rng), k, rng, lt);
             let is_repeated = match k {
                 0 => ge!(&data[k], &data[k + 1], lt),
                 k if k == count - 1 => ge!(&data[k - 1], &data[k], lt),
                 _ => ge!(&data[k - 1], &data[k + 1], lt),
             };
-
             (k, is_repeated)
         }
-    };
-    (p, is_repeated)
-}
-
-#[inline]
-// Integer square root, Newtons method. This is included to avoid relying on the standard library.
-fn isqrt(x: usize) -> usize {
-    #[cfg(not(std))]
-    {
-        if x <= 1 {
-            return x;
-        }
-        let s = usize::BITS / 2 - (x - 1).leading_zeros() / 2;
-        let mut g0 = 1 << s;
-        let mut g1 = (g0 + (x >> s)) >> 1;
-        while g1 < g0 {
-            g0 = g1;
-            g1 = (g0 + (x / g0)) >> 1;
-        }
-        g0
-    }
-
-    #[cfg(std)]
-    {
-        x.sqrt()
     }
 }
 
@@ -199,8 +169,9 @@ where
     let k = ((N * N * index) / len) as isize;
     let g = k - k % N as isize;
 
-    // Take the sample and reorder it into `N` groups.
+    // Take the sample
     let sample = sample(data, N * N, rng);
+
     for j in 0..N {
         let pos: [_; N] = array::from_fn(|i| j + N * i);
         sort_at(sample, pos, lt);
@@ -226,32 +197,41 @@ where
     (p, is_repeated)
 }
 
-/// Samples pairs of elements from the slice and checks if it is likely sorted in ascending or
-/// descending order, or if it is unsorted. Returns `SortOrder::Ascending` if the slice is sorted
-/// in ascending order, `SortOrder::Descending` if it is sorted in descending order and
-/// `SortOrder::Unsorted` if it is not sorted.
-fn likely_order<T, F>(data: &[T], rng: &mut WyRng, lt: &mut F) -> SortOrder
+/// Checks if the slice is likely to be sorted in ascending or descending order. Returns `None` if
+/// the slice is not sorted. Otherwise, returns `Some(index)` where `index` is the index of the
+/// pivot element.
+fn detect_sorted<T, F>(data: &mut [T], index: usize, rng: &mut WyRng, lt: &mut F) -> Option<usize>
 where
     F: FnMut(&T, &T) -> bool,
 {
-    const SAMPLE: usize = 32;
-    let len = data.len();
-    let mut test = || {
-        let a = rng.bounded_usize(0, len);
-        let b = rng.bounded_usize(0, len);
-        let (x, y) = (a.min(b), a.max(b));
-        lt(&data[x], &data[y]) as isize - lt(&data[y], &data[x]) as isize
-    };
-    let mut sample = core::iter::repeat(()).map(|_| (test)()).take(SAMPLE);
-    let order = sample.find(|&order| order != 0);
-    if let Some(preorder) = order {
-        if sample.all(|o| o == preorder || o == 0) {
-            preorder.into()
-        } else {
-            SortOrder::Unsorted
+    const SAMPLE: usize = 24;
+    let nudged = nudge(index, data.len());
+    let mut order = 0;
+    for _ in 0..SAMPLE {
+        let r = rng.bounded_usize(0, data.len());
+        let (x, y) = (r.min(nudged), r.max(nudged));
+        let next = lt(&data[x], &data[y]) as isize - lt(&data[y], &data[x]) as isize;
+        if order == 0 {
+            order = next;
+        } else if order != next {
+            return None;
         }
+    }
+    Some(nudged)
+}
+
+fn nudge(index: usize, len: usize) -> usize {
+    const GAP_START: f64 = 0.01;
+    const GAP_END: f64 = 0.001;
+    const LIMIT: f64 = 100_000_000.;
+    let n = len as f64;
+    let g = lerp(GAP_START, GAP_END, n.min(LIMIT) / LIMIT);
+    // let g = (GAP_START + 1.0 / sqrt(n)) / 2.0;
+    let x = index as f64 / len as f64;
+    if index < len / 2 {
+        (n * (x + g).min(0.5)) as usize
     } else {
-        SortOrder::Ascending
+        ceil(n * (x - g).max(0.5)).min(n - 1.) as usize
     }
 }
 
@@ -773,22 +753,11 @@ where
         ControlFlow::Continue((data, index, previous_pivot))
     }
 
-    // If the slice is likely sorted, try partitioning with the pivot at the index (ascending) or
-    // slightly before the corresponding index from the back (descending).
-    let likely_sorted = match likely_order(data, rng, lt) {
-        SortOrder::Ascending => true,
-        SortOrder::Descending => {
-            let gap = index.abs_diff(data.len()) / 128;
-            let pivot = (data.len() - index - 1).saturating_sub(gap);
-            data.swap(index, pivot);
-            true
-        }
-        SortOrder::Unsorted => false,
-    };
-
+    // If the slice is likely to be sorted, try partitioning with the pivot at the index (ascending)
+    // or slightly before the corresponding index from the back (descending).
     let mut previous_pivot = None;
-    if likely_sorted {
-        let (u, v) = partition_at(data, index, lt);
+    if let Some(p) = detect_sorted(data, index, rng, lt) {
+        let (u, v) = partition_at(data, p, lt);
         match descend(data, index, u, v, previous_pivot) {
             ControlFlow::Continue(result) => (data, index, previous_pivot) = result,
             ControlFlow::Break(_) => return,
@@ -890,17 +859,6 @@ where
             end = start;
         }
     }
-
-    // let (min, _) = data
-    //     .iter()
-    //     .enumerate()
-    //     .min_by(|&(_, x), &(_, y)| match lt(x, y) {
-    //         true => Ordering::Less,
-    //         false => Ordering::Greater,
-    //     })
-    //     .unwrap();
-    // data.swap(0, min);
-
     (0, 0)
 }
 
