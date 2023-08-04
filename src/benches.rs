@@ -1,9 +1,25 @@
 #[cfg(feature = "std")]
 extern crate std;
 
-use std::{eprintln, vec::Vec};
+use std::vec::Vec;
 
 use crate::{select_nth_unstable, sort::tinysort, wyrand::WyRng};
+
+/// Returns a vector of integers where approximately 90% of the elements are in sorted order. The
+/// maximum is randomized and in the range `0..count`.
+fn mostly_sorted_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
+    let mut data = Vec::with_capacity(count);
+    let max = rng.bounded_u32(0, count as u32);
+    for index in 0..count {
+        data.push((max * index as u32) / (count as u32));
+    }
+    for _ in 0..count / 10 {
+        let index = rng.bounded_usize(0, count);
+        let value = rng.bounded_u32(0, count as u32);
+        data[index] = value;
+    }
+    data
+}
 
 /// Returns a random boolean vector with `count` elements.
 fn random_bools(count: usize, rng: &mut WyRng) -> Vec<bool> {
@@ -24,7 +40,7 @@ fn random_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
 }
 
 /// Returns a vector of `count` random `u32` values in the range `0..sqrt(count)`.
-fn random_u32s_dups(count: usize, rng: &mut WyRng) -> Vec<u32> {
+fn random_dups_u32s(count: usize, rng: &mut WyRng) -> Vec<u32> {
     let mut data = Vec::with_capacity(count);
     let sqrt_count = (count as f64).sqrt() as u32;
     while data.len() < count {
@@ -128,16 +144,18 @@ fn bench<D, P: FnMut() -> D, T: FnMut(&mut D), B: FnMut(&mut D), C: FnMut(D) -> 
 fn turboselect_perf() {
     // cargo test -r turboselect_perf -- --nocapture --ignored
     // cargo flamegraph --unit-test -- turboselect_perf --ignored
+    use std::{eprintln, format};
 
     fn run<P, T>(label: &str, mut prep: P)
     where
         P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
         T: Ord,
     {
+        use colored::*;
         use std::io::Write;
 
         let lens = [
-            1_000, 10_000, 100_000, 1_000_000, // 10_000_000, 100_000_000
+            1_000, 10_000, 100_000, // 1_000_000, 10_000_000, 100_000_000
         ];
         let percentiles = [0.001, 0.01, 0.05, 0.25, 0.5];
         let percentile = |count: usize, p: f64| (count as f64 * p) as usize;
@@ -171,8 +189,13 @@ fn turboselect_perf() {
                 let durations = compare(len, index);
                 let (our_tput, baseline_tput) = durations.throughputs(len);
                 let ratio = our_tput / baseline_tput;
+                let ratio = if ratio > 1.0 {
+                    format!("{:5.03}", ratio).green()
+                } else {
+                    format!("{:5.03}", ratio).red()
+                };
                 eprintln!(
-                    "| {label:<18} | {len:<12} | {index:<11} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio:<5.03} |",
+                    "| {label:<18} | {len:<12} | {index:<11} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio} |",
                 );
 
                 for duration in &durations.ours {
@@ -204,9 +227,10 @@ fn turboselect_perf() {
 
     run("random_u32", random_u32s);
     run("sorted_u32", sorted_u32s);
+    run("mostlysort_u32", mostly_sorted_u32s);
     run("sawtooth_u32", sawtooth_u32s);
     run("reversed_u32", reversed_u32s);
-    run("randomdups_u32", random_u32s_dups);
+    run("randomdup_u32", random_dups_u32s);
     run("random_bool", random_bools);
 }
 
@@ -215,6 +239,8 @@ fn turboselect_perf() {
 fn tinysort_perf() {
     // cargo test -r tinysort_perf -- --nocapture --ignored
     // cargo flamegraph --unit-test -- tinysort_perf --ignored
+    use std::{eprintln, format};
+    use colored::*;
 
     fn run<P, T>(label: &str, mut prep: P)
     where
@@ -241,6 +267,11 @@ fn tinysort_perf() {
             let durations = compare(len);
             let (our_tput, baseline_tput) = durations.throughputs(len);
             let ratio = our_tput / baseline_tput;
+            let ratio = if ratio > 1.0 {
+                format!("{:5.03}", ratio).green()
+            } else {
+                format!("{:5.03}", ratio).red()
+            };
             eprintln!(
                     "| {label:<18} | {len:<12} | {our_tput:<20.03} | {baseline_tput:<18.03} | {ratio:<5.03} |",
                 );
@@ -260,6 +291,6 @@ fn tinysort_perf() {
     run("random_u32", random_u32s);
     run("sawtooth_u32", sawtooth_u32s);
     run("reversed_u32", reversed_u32s);
-    run("randomdups_u32", random_u32s_dups);
+    run("randomdups_u32", random_dups_u32s);
     run("random_bool", random_bools);
 }
