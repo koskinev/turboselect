@@ -5,7 +5,7 @@ use crate::Elem;
 #[inline]
 /// Compares the elements at `a` and `b` and swaps them if `a` is greater than `b`. Returns `true`
 /// if the elements were swapped.
-fn swap<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) -> bool
+fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) -> bool
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -37,7 +37,7 @@ where
 {
     macro_rules! sort2 {
         ($a:expr, $b:expr) => {
-            swap(data, pos[$a], pos[$b], lt);
+            sort2(data, pos[$a], pos[$b], lt);
         };
     }
     match N {
@@ -172,7 +172,7 @@ where
 {
     macro_rules! sort2 {
         ($a:expr, $b:expr) => {
-            swap(data, $a, $b, lt);
+            sort2(data, $a, $b, lt);
         };
     }
     match data.len() {
