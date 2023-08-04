@@ -10,7 +10,7 @@ Turboselect is an alternative implementation of the `slice::select_nth_unstable`
   //     i < index          i == index       i > index           
 ```
 
-Turboselect demonstrates better speed over the Quickselect implementation in the standard library, particulary for finding elements far from the median. The algorithm works by recursively selecting a pivot element to compare against and partitioning the slice into smaller parts. The implementation is partially based on The implementation is based on the Floyd & Rivest SELECT algorithm and K. Kiwiel's paper "On Floyd and Rivest's SELECT algorithm" [2],[3].
+Turboselect demonstrates better speed over the Quickselect implementation in the standard library, particulary for finding elements far from the median. The algorithm works by recursively selecting a pivot element to compare against and partitioning the slice into smaller parts. The implementation is partially based on K. Kiwiel's paper "On Floyd and Rivest's SELECT algorithm" [2], [3].
 
 In addition to `select_nth_unstable`, the following methods are provided:
 - `select_nth_unstable_by_key`, which takes a key extraction function as an argument.
