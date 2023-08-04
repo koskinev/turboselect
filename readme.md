@@ -20,22 +20,28 @@ The implementation relies heavily on unsafe code and is currently not thoroughly
 
 **Comparison with  `slice::select_nth_unstable` as the baseline**
  
-| slice length | index   | throughput | baseline | ratio |
-| ------------ | ------- | ---------- | -------- | ----- |
-| 1 000        | 1       | 1255.193   | 658.895  | 1.905 |
-| 1 000        | 50      | 924.130    | 629.538  | 1.468 |
-| 1 000        | 500     | 633.066    | 552.940  | 1.145 |
-| 10 000       | 10      | 2131.869   | 892.944  | 2.387 |
-| 10 000       | 500     | 1400.510   | 893.016  | 1.568 |
-| 10 000       | 5 000   | 943.022    | 740.596  | 1.273 |
-| 100 000      | 100     | 2633.922   | 972.657  | 2.708 |
-| 100 000      | 5 000   | 1815.562   | 939.621  | 1.932 |
-| 100 000      | 50 000  | 1204.720   | 804.198  | 1.498 |
-| 1 000 000    | 1 000   | 2737.727   | 972.119  | 2.816 |
-| 1 000 000    | 50 000  | 2093.268   | 955.093  | 2.192 |
-| 1 000 000    | 500 000 | 1336.267   | 818.857  | 1.632 |
-
-Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. 
+| slice length | index      | throughput | baseline | ratio |
+| ------------ | ---------- | ---------- | -------- | ----- |
+| 1 000        | 1          | 1249.153   | 661.467  | 1.888 |
+| 1 000        | 50         | 899.107    | 608.198  | 1.478 |
+| 1 000        | 500        | 628.416    | 546.771  | 1.149 |
+| 10 000       | 10         | 2175.853   | 919.347  | 2.367 |
+| 10 000       | 500        | 1396.770   | 882.031  | 1.584 |
+| 10 000       | 5 000      | 979.494    | 754.819  | 1.298 |
+| 100 000      | 100        | 2617.018   | 960.814  | 2.724 |
+| 100 000      | 5 000      | 1805.564   | 931.358  | 1.939 |
+| 100 000      | 50 000     | 1205.500   | 793.645  | 1.519 |
+| 1 000 000    | 1 000      | 2713.383   | 953.882  | 2.845 |
+| 1 000 000    | 50 000     | 2060.831   | 932.977  | 2.209 |
+| 1 000 000    | 500 000    | 1322.733   | 797.267  | 1.659 |
+| 10 000 000   | 10 000     | 2397.961   | 924.765  | 2.593 |
+| 10 000 000   | 500 000    | 1997.528   | 905.618  | 2.206 |
+| 10 000 000   | 5 000 000  | 1289.671   | 769.359  | 1.676 |
+| 100 000 000  | 100 000    | 2753.677   | 903.986  | 3.046 |
+| 100 000 000  | 5 000 000  | 1664.166   | 833.201  | 1.997 |
+| 100 000 000  | 50 000 000 | 1315.275   | 720.552  | 1.825 |
+  
+Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. See this table for full results: [bench_results.md](benchmark_results.md).
 
 This comparison was run on a Ryzen 5800H with pseudorandom `u32`s used as input. Similar tests were run with sawtooth, sorted and reverse sorted inputs, as well as pseudorandom `u32`s with many duplicates, and pseudorandom booleans. Turboselect outperformed Quickselect in all cases where the input had at least 100 000 elements. Turboselect may be slower than Quickselect for smaller presorted, reversed and sawtooth inputs.
 
