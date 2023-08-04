@@ -219,7 +219,7 @@ fn turboselect_perf() {
         // output.write_all(&results).unwrap();
     }
 
-    eprintln!("Benchmarking tinysort against core::slice::sort_unstable. The runs are randomly interleaved.");
+    eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");    
     eprintln!("Data preparation is ignored in the timing.\n");
 
     eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
@@ -278,7 +278,7 @@ fn tinysort_perf() {
         }
     }
 
-    eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");
+    eprintln!("Benchmarking tinysort against core::slice::sort_unstable. The runs are randomly interleaved.");
     eprintln!("Data preparation is ignored in the timing.\n");
 
     eprintln!(
