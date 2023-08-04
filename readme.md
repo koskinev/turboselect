@@ -37,7 +37,7 @@ The implementation relies heavily on unsafe code and is currently not thoroughly
 
 Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. 
 
-This comparison was run on a Ryzen 5800H with pseudorandom `u32`s used as input. Similar tests were run with sawtooth, sorted and reverse sorted inputs, as well as pseudorandom `u32`s with many duplicates, and pseudorandom booleans. Turboselect outperformed Quickselect in all except one case, finding the median element in 1000-element sawtooth pattern. In this case the throughput ratio was approximately 0.97.
+This comparison was run on a Ryzen 5800H with pseudorandom `u32`s used as input. Similar tests were run with sawtooth, sorted and reverse sorted inputs, as well as pseudorandom `u32`s with many duplicates, and pseudorandom booleans. Turboselect outperformed Quickselect in all cases where the input had at least 100 000 elements. Turboselect may be slower than Quickselect for smaller presorted, reversed and sawtooth inputs.
 
 You can run the benchmarks with `cargo test -r turboselect_perf -- --nocapture --ignored`.
 
