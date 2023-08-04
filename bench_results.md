@@ -1,6 +1,6 @@
 # Full benchmark results
 
-The following table compares `turboselect::select_nth_unstable` with `core::slice::select_nth_unstable`. Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. 
+The following table compares `turboselect::select_nth_unstable` with `core::slice::select_nth_unstable` as the baseline. The runs were randomly interleaved, i.e. either `turboselect` or `core` was chosen randomly for each run. Throughput was calculated as millions of elements per second, i.e `data.len() * runs / seconds`. Data preparation was ignored in the timing.
 
 The input patterns are:
 - `random_u32`: pseudorandom `u32`s
