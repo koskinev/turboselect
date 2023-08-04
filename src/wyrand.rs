@@ -1,15 +1,115 @@
 #![allow(dead_code)]
 
+use crate::math::{exp2, floor, log, powf};
+
 /// A pseudorandom number generator that uses the WyRand algorithm.
 pub struct WyRng {
     /// The current state of the RNG.
     state: u64,
 }
 
+/// An iterator over `count` sequential pseudorandom `usize`s in the range `[0, bound)`. Modified
+/// from
+///
+/// https://github.com/shekelyan/sampleiterator/blob/025bf9f963616e996bffa9bf260416a2c8ef9310/hiddenshuffle.rs.
+///
+/// Shekelyan, M., & Cormode, G. (2021). Sequential Random Sampling Revisited: Hidden Shuffle
+/// Method. International Conference on Artificial Intelligence and Statistics.
+struct HiddenShuffle<'a> {
+    /// The number of high elements.
+    high: usize,
+    /// The number of low elements.
+    low: usize,
+    /// The upper bound of the elements in the sequence.
+    bound: usize,
+    /// The number of elements in the sequence.
+    count: usize,
+    /// The parameter referred to as alpha in Algorithm 3 of the paper.
+    a: f64,
+    /// The underlying RNG.
+    rng: &'a mut WyRng,
+}
+
+impl<'a> HiddenShuffle<'a> {
+    fn new(rng: &'a mut WyRng, bound: usize, count: usize) -> Self {
+        assert!(bound >= count);
+
+        let mut high: usize = 0;
+        let mut i: usize = 0;
+
+        if bound > count {
+            high = count;
+            while i < count {
+                let d = (bound - count) as f64;
+                let q = 1.0 - 1.0 * d / (bound - i) as f64;
+                i += floor(log(rng.f64(), 1.0 - q)) as usize;
+                let pi = 1.0 - 1.0 * d / (bound as f64 - i as f64).max(1.0);
+                if i < count && (rng.f64() < (pi / q)) {
+                    high -= 1;
+                }
+                i += 1;
+            }
+        }
+
+        Self {
+            high,
+            low: count - high,
+            bound,
+            count,
+            a: 1.0,
+            rng,
+        }
+    }
+}
+
+impl<'a> Iterator for HiddenShuffle<'a> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.high > 0 {
+            let d = floor((self.bound - self.count) as f64);
+            let s_old = self.count + (self.a * d) as usize;
+            self.a *= powf(self.rng.f64(), 1.0 / (self.high as f64));
+            let s = self.count + (self.a * d) as usize;
+
+            if s < s_old {
+                self.high -= 1;
+                return Some((self.bound - 1) - s);
+            } else {
+                self.low += 1; // duplicate detected
+                self.high -= 1;
+            }
+        }
+
+        if self.low > 0 {
+            let u = self.rng.f64();
+            let mut s = 0;
+            let mut f = (self.low as f64) / (self.count as f64);
+
+            while f < u && s < (self.count - self.low) {
+                f = 1.0 - (1.0 - (self.low as f64) / ((self.count - s - 1) as f64)) * (1.0 - f);
+                s += 1;
+            }
+
+            self.low -= 1;
+            self.count = self.count - s - 1;
+
+            return Some((self.bound - 1) - self.count);
+        }
+
+        None
+    }
+}
+
 impl WyRng {
     /// Returns a `bool`.
     pub fn bool(&mut self) -> bool {
         self.u64() > u64::MAX / 2
+    }
+
+    /// Returns a `f64` in the range `[low, high)`.
+    pub fn bounded_f64(&mut self, low: f64, high: f64) -> f64 {
+        self.f64() * (high - low) + low
     }
 
     /// Returns a `u8` in the range `[low, high)`.
@@ -126,6 +226,11 @@ impl WyRng {
         }
     }
 
+    /// Returns a `f64` in the range `[0, 1)`.
+    pub fn f64(&mut self) -> f64 {
+        ((self.u64() >> 11) as f64) * exp2(-53_f64)
+    }
+
     /// Returns a new PRNG initialized with the given seed. If the seed is set to 0, the seed is
     /// based on the address of the PRNG. This should yield an unique sequence for each run of the
     /// program.
@@ -141,6 +246,15 @@ impl WyRng {
         }
         rng.state = rng.state.wrapping_add(seed);
         rng
+    }
+
+    /// Returns an iterator over `count` sequential pseudorandom `usize`s in the range `[0, bound)`.
+    pub fn sequential_usizes(
+        &'_ mut self,
+        bound: usize,
+        count: usize,
+    ) -> impl Iterator<Item = usize> + '_ {
+        HiddenShuffle::new(self, bound, count)
     }
 
     /// Returns a `u8`.
