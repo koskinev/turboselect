@@ -41,7 +41,7 @@ The implementation relies heavily on unsafe code and is currently not thoroughly
 | 100 000 000  | 5 000 000  | 1664.166   | 833.201  | 1.997 |
 | 100 000 000  | 50 000 000 | 1315.275   | 720.552  | 1.825 |
   
-Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. See this table for full results: [bench_results.md](benchmark_results.md).
+Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. See [this_table](bench_results.md) for full results.
 
 This comparison was run on a Ryzen 5800H with pseudorandom `u32`s used as input. Similar tests were run with sawtooth, sorted and reverse sorted inputs, as well as pseudorandom `u32`s with many duplicates, and pseudorandom booleans. Turboselect outperformed Quickselect in all cases where the input had at least 100 000 elements. Turboselect may be slower than Quickselect for smaller presorted, reversed and sawtooth inputs.
 
