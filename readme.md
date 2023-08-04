@@ -10,7 +10,7 @@ Turboselect is an alternative implementation of the `slice::select_nth_unstable`
   //     i < index          i == index       i > index           
 ```
 
-Turboselect demonstrates better speed over the Quickselect implementation in the standard library, particulary for finding elements far from the median. The algorithm works by recursively selecting a pivot element to compare against and partitioning the slice into smaller parts. The implementation is partially based on K. Kiwiel's paper "On Floyd and Rivest's SELECT algorithm" [2], [3].
+Turboselect demonstrates better speed over the Quickselect implementation in the standard library, particulary for finding elements far from the median. The algorithm works by recursively selecting a pivot element to compare against and partitioning the slice into smaller parts. The implementation is partially based on K. Kiwiel's paper "On Floyd and Rivest's SELECT algorithm" [[2]](https://dx.doi.org/10.1145/360680.360694), [[3]](https://dx.doi.org/10.1016/j.tcs.2005.06.032).
 
 In addition to `select_nth_unstable`, the following methods are provided:
 - `select_nth_unstable_by_key`, which takes a key extraction function as an argument.
@@ -72,7 +72,7 @@ The difference is illustrated in the following diagram, where the levels of bloc
        └─┘                           |
 ```
 
-Pivot selection starts with putting a random sample of elements to the beginning of the slice. When the slice is large, this is followed with a recursive call to Turboselect. For small slices, an extension of median-of-medians inspired by A. Alexandrescu's paper "Fast Deterministic Selection" [1], is used. See the function `kth_of_nths` for details.
+Pivot selection starts with putting a random sample of elements to the beginning of the slice. When the slice is large, this is followed with a recursive call to Turboselect. For small slices, an extension of median-of-medians inspired by A. Alexandrescu's paper "Fast Deterministic Selection" [[1]](https://dx.doi.org/10.4230/LIPIcs.SEA.2017.24), is used. See the function `kth_of_nths` for details.
 
 The sampling allows the pivot selection to detect when the pivot is likely to have many duplicates. In these cases, the slice is split into three parts:
 
@@ -88,12 +88,12 @@ Kiwiel suggests a dual-pivot partitioning scheme, but it is not used, since it t
 
 ## About the name
 
-"Turbo" in the name refers to the complexity added in order to gain some speed. It is not a *guarantee* of speed, as there are plenty of slow turbo things out there.
+"Turbo" refers to the complexity added in order to get the gains over the core library counterpart. Some other approach might be faster. 
 
 ## References
 
 [1] Alexandrescu, Andrei. (2017). Fast Deterministic Selection. [10.4230/LIPIcs.SEA.2017.24](https://dx.doi.org/10.4230/LIPIcs.SEA.2017.24). 
 
-[2] Floyd, Robert & Rivest, Ronald. (1975). Algorithm 489: The algorithm SELECT—for finding the ith smallest of n elements. Communications of the ACM. 18. [10.1145/360680.360694](https://dx.doi.org/10.1145/360680.360694). 
+[2] Floyd, Robert & Rivest, Ronald. (1975). Algorithm 489: The algorithm SELECT — for finding the $i$th smallest of $n$ elements. Communications of the ACM. 18. [10.1145/360680.360694](https://dx.doi.org/10.1145/360680.360694). 
 
 [3] Kiwiel, Krzysztof. (2005). On Floyd and Rivest's SELECT algorithm. Theoretical Computer Science. 347. 214-238. [10.1016/j.tcs.2005.06.032](https://dx.doi.org/10.1016/j.tcs.2005.06.032).  
