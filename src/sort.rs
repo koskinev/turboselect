@@ -1,6 +1,73 @@
-use core::{mem::ManuallyDrop, ops::Range};
+use core::mem::ManuallyDrop;
 
-use crate::Elem;
+/// Represents an element that has been removed from the heap, leaving a hole. When dropped, an
+/// `Elem` will fill the hole position with the value that was originally removed.
+pub(crate) struct Elem<'a, T: 'a> {
+    data: &'a mut [T],
+    value: core::mem::MaybeUninit<T>,
+    index: usize,
+}
+
+impl<'a, T> Elem<'a, T> {
+    /// Returns a reference to the element.
+    #[inline]
+    pub(crate) fn as_ref(&self) -> &T {
+        unsafe { self.value.assume_init_ref() }
+    }
+
+    /// Moves the hole to a new location.
+    ///
+    /// Unsafe because index must be within the data slice and not equal to pos.
+    #[inline]
+    pub(crate) unsafe fn move_back(&mut self) {
+        debug_assert!(self.index > 0);
+        unsafe {
+            let ptr = self.data.as_mut_ptr().add(self.index);
+            core::ptr::copy_nonoverlapping(ptr, ptr.sub(1), 1);
+        }
+        self.index -= 1;
+    }
+
+    /// Create a new `Elem` from the element at `index`.
+    ///
+    /// Panics if the index is out of bounds.
+    #[inline]
+    pub(crate) fn new(data: &'a mut [T], index: usize) -> Self {
+        assert!(index < data.len());
+        // Safety: we just checked that the index is within the slice.
+        let value = unsafe { core::ptr::read(data.get_unchecked(index)) };
+        Elem {
+            data,
+            value: core::mem::MaybeUninit::new(value),
+            index,
+        }
+    }
+
+    /// Returns a reference to the element before `self.index`.
+    ///
+    /// Unsafe because index must > 0.
+    #[inline]
+    pub(crate) unsafe fn prev(&self) -> &T {
+        debug_assert!(self.index > 0);
+        unsafe { self.data.get_unchecked(self.index - 1) }
+    }
+}
+
+impl<T> Drop for Elem<'_, T> {
+    #[inline]
+    fn drop(&mut self) {
+        // Safety: This fills the hole with the value that was originally removed. The caller must
+        // ensure that hole position is valid.
+        unsafe {
+            let pos = self.index;
+            core::ptr::copy_nonoverlapping(
+                &*self.value.as_ptr(),
+                self.data.get_unchecked_mut(pos),
+                1,
+            );
+        }
+    }
+}
 
 #[inline]
 /// Compares the elements at `a` and `b` and swaps them if `a` is greater than `b`. Returns `true`
@@ -298,21 +365,16 @@ pub(crate) fn insertion_sort<T, F>(data: &mut [T], lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let Range { start, end } = data.as_mut_ptr_range();
-    unsafe {
-        let mut l = start.add(1);
-        while l < end {
-            {
-                let mut elem = Elem::new(l);
-                while elem.dst > start {
-                    if !lt(&elem, &*elem.dst.sub(1)) {
-                        break;
-                    }
-                    core::ptr::copy_nonoverlapping(elem.dst.sub(1), elem.dst, 1);
-                    elem.dst = elem.dst.sub(1);
-                }
+    let mut index = 1;
+    let end = data.len();
+    while index < end {
+        let mut elem = Elem::new(data, index);
+        while elem.index > 0 {
+            if unsafe { !lt(elem.as_ref(), elem.prev()) } {
+                break;
             }
-            l = l.add(1);
+            unsafe { elem.move_back() };
         }
+        index += 1;
     }
 }
