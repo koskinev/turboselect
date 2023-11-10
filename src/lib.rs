@@ -173,12 +173,14 @@ where
 
     for j in 0..N {
         let pos: [_; N] = array::from_fn(|i| j + N * i);
-        sort_at(sample, pos, lt);
+        // Todo: safety
+        unsafe { sort_at(sample, pos, lt) };
     }
 
     // Sort the group where the pivot is located.
     let pos: [_; N] = array::from_fn(|i| g as usize + i);
-    sort_at(sample, pos, lt);
+    // Todo: safety
+    unsafe { sort_at(sample, pos, lt) };
 
     // Calculate:
     // - `o`: pivot's offset from the group median, scaled by 2 to keep the pivot near the median.

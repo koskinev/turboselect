@@ -337,7 +337,8 @@ fn sorts() {
         let pos: [usize; N] = core::array::from_fn(|i| i);
         for _iter in 0..repeat {
             let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
-            sort_at(&mut data, pos, &mut usize::lt);
+            // Todo: safety
+            unsafe { sort_at(&mut data, pos, &mut usize::lt) };
             for i in 1..N {
                 assert!(data[i - 1] <= data[i]);
             }
