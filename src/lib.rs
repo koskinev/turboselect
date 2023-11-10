@@ -26,7 +26,6 @@ use math::{ceil, lerp, sqrt};
 use sort::{sort_at, tinysort};
 use wyrand::WyRng;
 
-
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
 struct Elem<T> {
     value: ManuallyDrop<T>,

@@ -40,7 +40,6 @@ pub(crate) fn floor(x: f64) -> f64 {
     }
 }
 
-
 #[inline]
 /// Linearly interpolates between `a` and `b` by `t`, where `t` is in the range `[0.0, 1.0]`.
 pub(crate) fn lerp(a: f64, b: f64, t: f64) -> f64 {

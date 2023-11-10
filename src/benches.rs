@@ -219,7 +219,7 @@ fn turboselect_perf() {
         // output.write_all(&results).unwrap();
     }
 
-    eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");    
+    eprintln!("Benchmarking turboselect against core::slice::select_nth_unstable. The runs are randomly interleaved.");
     eprintln!("Data preparation is ignored in the timing.\n");
 
     eprintln!("| data type          | slice length | index       | throughput, M el/s   | baseline, M el /s  | ratio |");
@@ -239,8 +239,8 @@ fn turboselect_perf() {
 fn tinysort_perf() {
     // cargo test -r tinysort_perf -- --nocapture --ignored
     // cargo flamegraph --unit-test -- tinysort_perf --ignored
-    use std::{eprintln, format};
     use colored::*;
+    use std::{eprintln, format};
 
     fn run<P, T>(label: &str, mut prep: P)
     where
