@@ -16,7 +16,6 @@ mod tests;
 mod wyrand;
 
 use core::{
-    array,
     cmp::{self, Ordering},
     mem::{self, ManuallyDrop, MaybeUninit},
     ops::{ControlFlow, Deref, DerefMut, Range},
@@ -172,15 +171,11 @@ where
     let sample = sample(data, N * N, rng);
 
     for j in 0..N {
-        let pos: [_; N] = array::from_fn(|i| j + N * i);
-        // Todo: safety
-        unsafe { sort_at(sample, pos, lt) };
+        sort_at(sample, &|i| j + N * i, N, lt);
     }
 
     // Sort the group where the pivot is located.
-    let pos: [_; N] = array::from_fn(|i| g as usize + i);
-    // Todo: safety
-    unsafe { sort_at(sample, pos, lt) };
+    sort_at(sample, &|i| g as usize + i, N, lt);
 
     // Calculate:
     // - `o`: pivot's offset from the group median, scaled by 2 to keep the pivot near the median.
