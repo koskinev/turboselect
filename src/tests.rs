@@ -1,6 +1,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+use core::convert::identity;
 use std::{io::Write, println, vec::Vec};
 
 use crate::{
@@ -334,11 +335,10 @@ fn sorts() {
         let repeat = 1;
 
         let mut rng = WyRng::new(0);
-        let pos: [usize; N] = core::array::from_fn(|i| i);
         for _iter in 0..repeat {
             let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
             // Todo: safety
-            unsafe { sort_at(&mut data, pos, &mut usize::lt) };
+            sort_at(&mut data, &identity, N, &mut usize::lt);
             for i in 1..N {
                 assert!(data[i - 1] <= data[i]);
             }

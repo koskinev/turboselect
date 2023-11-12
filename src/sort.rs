@@ -1,7 +1,4 @@
-use core::{
-    mem::{ManuallyDrop, MaybeUninit},
-    ptr, slice,
-};
+use core::convert::identity;
 
 /// Represents an element that has been removed from the heap, leaving a hole. When dropped, an
 /// `Elem` will fill the hole position with the value that was originally removed.
@@ -74,104 +71,67 @@ impl<T> Drop for Elem<'_, T> {
 
 #[inline]
 /// Compares the elements at `a` and `b` and swaps them if `a` is greater than `b`. Returns `true`
-/// if the elements were swapped.
-///
-/// Unsafe because `a` and `b` must be within the slice and not equal.
-unsafe fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) -> bool
+/// if the elements were swapped. Panics if `a` or `b` is out of bounds or `a == b`.
+fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) -> bool
 where
     F: FnMut(&T, &T) -> bool,
 {
-    debug_assert!(a != b);
-    debug_assert!(a < data.len());
-    debug_assert!(b < data.len());
-
+    assert!(a != b);
+    assert!(a < data.len());
+    assert!(b < data.len());
     unsafe {
         let ptr = data.as_mut_ptr();
-        let (a, b) = (a as isize, b as isize);
-        let swap = lt(&*ptr.offset(b), &*ptr.offset(a)) as isize;
-        let max = ptr.offset(swap * a + (1 - swap) * b);
-        let min = ptr.offset(swap * b + (1 - swap) * a);
-        let tmp = ManuallyDrop::new(core::ptr::read(max));
-        ptr.offset(a).copy_from(min, 1);
-        ptr.offset(b).write(ManuallyDrop::into_inner(tmp));
+        let swap = lt(&*ptr.add(b), &*ptr.add(a)) as usize;
+        let max = ptr.add(swap * a + (1 - swap) * b);
+        let min = ptr.add(swap * b + (1 - swap) * a);
+        let tmp = max.read();
+        ptr.add(a).copy_from(min, 1);
+        ptr.add(b).write(tmp);
         swap != 0
     }
 }
 
 #[rustfmt::skip]
-/// Sorts the elements at the positions in `pos` so that each element at `pos[i]` is less than or 
-/// equal to the element at `pos[j]` if `i < j`.
-/// 
-/// The sorting networks are from https://bertdobbelaere.github.io/sorting_networks.html
-/// 
-/// Unsafe because the positions must be unique and within the slice.
-pub(crate) unsafe fn sort_at<T, F, const N: usize>(data: &mut [T], pos: [usize; N], lt: &mut F)
+pub(crate) fn sort_at<T, M, F>(data: &mut [T], map: &M, n: usize, lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
-{
-    // Copy the elements to a temporary array.
-    let ptr = data.as_mut_ptr();
-    // Safety: An array of MaybeUninit's can always be assumed to be initialized.
-    let mut elems: [MaybeUninit<T>; N] = MaybeUninit::uninit().assume_init();
-    for index in 0..N {
-        // Safety: The caller guarantees that the positions are unique and within the slice.
-        elems[index].write(ptr::read(ptr.add(pos[index])));
-    }
-
-    // Sort the elements.
-    // Safety: The elements were just initialized and the length of the array is N.
-    let slice = slice::from_raw_parts_mut(elems.as_mut_ptr().cast(), N);
-    tinysort(slice, lt);
-
-    // Copy the elements back to the original array.
-    for index in 0..N {
-        // Safety: The caller guarantees that the positions are unique and within the slice.
-        // The elements are initialized.
-        ptr.add(pos[index]).write(elems[index].assume_init_read());
-    }
-}
-
-#[rustfmt::skip]
-pub(crate) fn tinysort<T,F>(data: &mut [T],  lt: &mut F)
-where
-    F: FnMut(&T, &T) -> bool,
+    M: Fn(usize) -> usize,
 {
     macro_rules! sort2 {
         ($a:expr, $b:expr) => {
-            sort2(data, $a, $b, lt);
+            sort2(data, map($a), map($b), lt);
         };
     }
 
-    // Safety: The unsafety of the following blocks is caused by the calls to the sort2 function,
-    // which requires that the indices are within the slice and not equal. Since the indices are
-    // hardcoded, this is guaranteed. 
-    match data.len() {
+    match n {
         0 | 1 => {}
-        2 => unsafe { sort2!(0, 1); }
-        3 => unsafe { sort2!(0, 2); sort2!(0, 1); sort2!(1, 2); }
-        4 => unsafe { sort2!(0, 2); sort2!(1, 3); sort2!(0, 1); sort2!(2, 3); sort2!(1, 2); }
-        5 => unsafe { 
+        2 => { sort2!(0, 1); }
+        3 => { sort2!(0, 2); sort2!(0, 1); sort2!(1, 2); }
+        4 => { 
+            sort2!(0, 2); sort2!(1, 3); sort2!(0, 1); sort2!(2, 3); sort2!(1, 2); 
+        }
+        5 => { 
             sort2!(0, 3); sort2!(1, 4); sort2!(0, 2); sort2!(1, 3); sort2!(0, 1); 
             sort2!(2, 4); sort2!(1, 2); sort2!(3, 4); sort2!(2, 3); 
         }
-        6 => unsafe { 
+        6 => { 
             sort2!(0, 5); sort2!(1, 3); sort2!(2, 4); sort2!(1, 2); sort2!(3, 4); 
             sort2!(0, 3); sort2!(2, 5); sort2!(0, 1); sort2!(2, 3); sort2!(4, 5); 
             sort2!(1, 2); sort2!(3, 4); 
         }
-        7 => unsafe { 
+        7 => { 
             sort2!(0, 6); sort2!(2, 3); sort2!(4, 5); sort2!(0, 2); sort2!(1, 4); 
             sort2!(3, 6); sort2!(0, 1); sort2!(2, 5); sort2!(3, 4); sort2!(1, 2); 
             sort2!(4, 6); sort2!(2, 3); sort2!(4, 5); sort2!(1, 2); sort2!(3, 4); 
             sort2!(5, 6); 
         }
-        8 => unsafe { 
+        8 => { 
             sort2!(0, 2); sort2!(1, 3); sort2!(4, 6); sort2!(5, 7); sort2!(0, 4); 
             sort2!(1, 5); sort2!(2, 6); sort2!(3, 7); sort2!(0, 1); sort2!(2, 3); 
             sort2!(4, 5); sort2!(6, 7); sort2!(2, 4); sort2!(3, 5); sort2!(1, 4); 
             sort2!(3, 6); sort2!(1, 2); sort2!(3, 4); sort2!(5, 6); 
         }
-        9 => unsafe {
+        9 => {
             sort2!(0, 3); sort2!(2, 5); sort2!(1, 7); sort2!(4, 8); sort2!(2, 4); 
             sort2!(5, 6); sort2!(0, 7); sort2!(3, 8); sort2!(0, 2); sort2!(1, 3); 
             sort2!(4, 5); sort2!(7, 8); sort2!(1, 4); sort2!(3, 6); sort2!(5, 7); 
@@ -179,7 +139,7 @@ where
             sort2!(4, 5); sort2!(6, 7); sort2!(1, 2); sort2!(3, 4); sort2!(5, 6); 
             
         }
-        10 => unsafe {
+        10 => {
             sort2!(3, 5); sort2!(4, 6); sort2!(2, 7); sort2!(0, 8); sort2!(1, 9); 
             sort2!(0, 2); sort2!(1, 4); sort2!(5, 8); sort2!(7, 9); sort2!(0, 3); 
             sort2!(2, 4); sort2!(5, 7); sort2!(6, 9); sort2!(0, 1); sort2!(3, 6); 
@@ -187,7 +147,7 @@ where
             sort2!(1, 2); sort2!(3, 5); sort2!(4, 6); sort2!(7, 8); sort2!(2, 3); 
             sort2!(4, 5); sort2!(6, 7); sort2!(3, 4); sort2!(5, 6); 
         }
-        11 => unsafe {
+        11 => {
             sort2!(2, 4); sort2!(1, 6); sort2!(3, 7); sort2!(5, 8); sort2!(0, 9); 
             sort2!(0, 1); sort2!(3, 5); sort2!(7, 8); sort2!(6, 9); sort2!(4, 10); 
             sort2!(1, 3); sort2!(2, 5); sort2!(4, 7); sort2!(8, 10); sort2!(1, 2); 
@@ -197,70 +157,87 @@ where
             sort2!(5, 6); sort2!(7, 8); sort2!(2, 3); sort2!(4, 5); sort2!(6, 7); 
             
         }
-        12 => unsafe {
-            sort2!(2, 6); sort2!(1, 7); sort2!(0, 8); sort2!(5, 9); sort2!(4, 10); 
-            sort2!(3, 11); sort2!(0, 1); sort2!(3, 4); sort2!(2, 5); sort2!(7, 8); 
-            sort2!(6, 9); sort2!(10, 11); sort2!(0, 2); sort2!(1, 6); sort2!(5, 10); 
-            sort2!(9, 11); sort2!(1, 2); sort2!(0, 3); sort2!(4, 6); sort2!(5, 7); 
-            sort2!(9, 10); sort2!(8, 11); sort2!(1, 4); sort2!(3, 5); sort2!(6, 8); 
-            sort2!(7, 10); sort2!(1, 3); sort2!(2, 5); sort2!(6, 9); sort2!(8, 10); 
-            sort2!(2, 3); sort2!(4, 5); sort2!(6, 7); sort2!(8, 9); sort2!(4, 6); 
-            sort2!(5, 7); sort2!(3, 4); sort2!(5, 6); sort2!(7, 8); 
+        12 => {
+            sort2!(2, 6);  sort2!(1, 7);   sort2!(0, 8); sort2!(5, 9); sort2!(4, 10); 
+            sort2!(3, 11); sort2!(0, 1);   sort2!(3, 4); sort2!(2, 5); sort2!(7, 8); 
+            sort2!(6, 9);  sort2!(10, 11); sort2!(0, 2); sort2!(1, 6); sort2!(5, 10); 
+            sort2!(9, 11); sort2!(1, 2);   sort2!(0, 3); sort2!(4, 6); sort2!(5, 7); 
+            sort2!(9, 10); sort2!(8, 11);  sort2!(1, 4); sort2!(3, 5); sort2!(6, 8); 
+            sort2!(7, 10); sort2!(1, 3);   sort2!(2, 5); sort2!(6, 9); sort2!(8, 10); 
+            sort2!(2, 3);  sort2!(4, 5);   sort2!(6, 7); sort2!(8, 9); sort2!(4, 6); 
+            sort2!(5, 7);  sort2!(3, 4);   sort2!(5, 6); sort2!(7, 8); 
         }
-        13 => unsafe {
-            sort2!(3, 7); sort2!(6, 8); sort2!(2, 9); sort2!(1, 10); sort2!(5, 11); 
-            sort2!(0, 12); sort2!(2, 3); sort2!(1, 6); sort2!(7, 9); sort2!(8, 10); 
-            sort2!(4, 11); sort2!(1, 2); sort2!(0, 4); sort2!(3, 6); sort2!(7, 8); 
-            sort2!(9, 10); sort2!(11, 12); sort2!(4, 6); sort2!(5, 9); sort2!(8, 11); 
-            sort2!(10, 12); sort2!(0, 5); sort2!(4, 7); sort2!(3, 8); sort2!(9, 10); 
-            sort2!(6, 11); sort2!(0, 1); sort2!(2, 5); sort2!(7, 8); sort2!(6, 9); 
-            sort2!(10, 11); sort2!(1, 3); sort2!(2, 4); sort2!(5, 6); sort2!(9, 10); 
-            sort2!(1, 2); sort2!(3, 4); sort2!(5, 7); sort2!(6, 8); sort2!(2, 3); 
-            sort2!(4, 5); sort2!(6, 7); sort2!(8, 9); sort2!(3, 4); sort2!(5, 6); 
-            
+        13 => {
+            sort2!(3, 7);   sort2!(6, 8);   sort2!(2, 9); sort2!(1, 10); sort2!(5, 11); 
+            sort2!(0, 12);  sort2!(2, 3);   sort2!(1, 6); sort2!(7, 9);  sort2!(8, 10); 
+            sort2!(4, 11);  sort2!(1, 2);   sort2!(0, 4); sort2!(3, 6);  sort2!(7, 8); 
+            sort2!(9, 10);  sort2!(11, 12); sort2!(4, 6); sort2!(5, 9);  sort2!(8, 11); 
+            sort2!(10, 12); sort2!(0, 5);   sort2!(4, 7); sort2!(3, 8);  sort2!(9, 10); 
+            sort2!(6, 11);  sort2!(0, 1);   sort2!(2, 5); sort2!(7, 8);  sort2!(6, 9); 
+            sort2!(10, 11); sort2!(1, 3);   sort2!(2, 4); sort2!(5, 6);  sort2!(9, 10); 
+            sort2!(1, 2);   sort2!(3, 4);   sort2!(5, 7); sort2!(6, 8);  sort2!(2, 3); 
+            sort2!(4, 5);   sort2!(6, 7);   sort2!(8, 9); sort2!(3, 4);  sort2!(5, 6); 
         }
-        14 => unsafe {
-            sort2!(0, 1); sort2!(2, 3); sort2!(4, 5); sort2!(6, 7); sort2!(8, 9); 
-            sort2!(10, 11); sort2!(12, 13); sort2!(0, 2); sort2!(1, 3); sort2!(4, 8); 
-            sort2!(5, 9); sort2!(10, 12); sort2!(11, 13); sort2!(1, 2); sort2!(0, 4); 
-            sort2!(3, 7); sort2!(5, 8); sort2!(6, 10); sort2!(11, 12); sort2!(9, 13); 
-            sort2!(1, 5); sort2!(0, 6); sort2!(3, 9); sort2!(4, 10); sort2!(8, 12); 
-            sort2!(7, 13); sort2!(4, 6); sort2!(7, 9); sort2!(2, 10); sort2!(3, 11); 
-            sort2!(1, 3); sort2!(6, 7); sort2!(2, 8); sort2!(5, 11); sort2!(10, 12); 
-            sort2!(1, 4); sort2!(3, 5); sort2!(2, 6); sort2!(8, 10); sort2!(7, 11); 
-            sort2!(9, 12); sort2!(2, 4); sort2!(3, 6); sort2!(5, 8); sort2!(7, 10); 
-            sort2!(9, 11); sort2!(3, 4); sort2!(5, 6); sort2!(7, 8); sort2!(9, 10); 
+        14 => {
+            sort2!(0, 1);   sort2!(2, 3);   sort2!(4, 5);   sort2!(6, 7);   sort2!(8, 9); 
+            sort2!(10, 11); sort2!(12, 13); sort2!(0, 2);   sort2!(1, 3);   sort2!(4, 8); 
+            sort2!(5, 9);   sort2!(10, 12); sort2!(11, 13); sort2!(1, 2);   sort2!(0, 4); 
+            sort2!(3, 7);   sort2!(5, 8);   sort2!(6, 10);  sort2!(11, 12); sort2!(9, 13); 
+            sort2!(1, 5);   sort2!(0, 6);   sort2!(3, 9);   sort2!(4, 10);  sort2!(8, 12); 
+            sort2!(7, 13);  sort2!(4, 6);   sort2!(7, 9);   sort2!(2, 10);  sort2!(3, 11); 
+            sort2!(1, 3);   sort2!(6, 7);   sort2!(2, 8);   sort2!(5, 11);  sort2!(10, 12); 
+            sort2!(1, 4);   sort2!(3, 5);   sort2!(2, 6);   sort2!(8, 10);  sort2!(7, 11); 
+            sort2!(9, 12);  sort2!(2, 4);   sort2!(3, 6);   sort2!(5, 8);   sort2!(7, 10); 
+            sort2!(9, 11);  sort2!(3, 4);   sort2!(5, 6);   sort2!(7, 8);   sort2!(9, 10); 
             sort2!(6, 7); 
         }
-        15 => unsafe {
-            sort2!(1, 2); sort2!(5, 8); sort2!(3, 10); sort2!(9, 11); sort2!(7, 12); 
-            sort2!(6, 13); sort2!(4, 14); sort2!(1, 5); sort2!(3, 7); sort2!(2, 8); 
-            sort2!(6, 9); sort2!(10, 12); sort2!(11, 13); sort2!(0, 14); sort2!(1, 6); 
-            sort2!(0, 7); sort2!(2, 9); sort2!(4, 10); sort2!(5, 11); sort2!(8, 13); 
-            sort2!(12, 14); sort2!(2, 4); sort2!(3, 5); sort2!(0, 6); sort2!(8, 10); 
-            sort2!(7, 11); sort2!(9, 12); sort2!(13, 14); sort2!(1, 2); sort2!(0, 3); 
-            sort2!(4, 7); sort2!(6, 8); sort2!(5, 9); sort2!(10, 11); sort2!(12, 13); 
-            sort2!(0, 1); sort2!(2, 3); sort2!(4, 6); sort2!(7, 9); sort2!(10, 12); 
-            sort2!(11, 13); sort2!(1, 2); sort2!(3, 5); sort2!(8, 10); sort2!(11, 12); 
-            sort2!(3, 4); sort2!(5, 6); sort2!(7, 8); sort2!(9, 10); sort2!(2, 3); 
-            sort2!(4, 5); sort2!(6, 7); sort2!(8, 9); sort2!(10, 11); sort2!(5, 6); 
+        15 => {
+            sort2!(1, 2);   sort2!(5, 8);   sort2!(3, 10);  sort2!(9, 11);  sort2!(7, 12); 
+            sort2!(6, 13);  sort2!(4, 14);  sort2!(1, 5);   sort2!(3, 7);   sort2!(2, 8); 
+            sort2!(6, 9);   sort2!(10, 12); sort2!(11, 13); sort2!(0, 14);  sort2!(1, 6); 
+            sort2!(0, 7);   sort2!(2, 9);   sort2!(4, 10);  sort2!(5, 11);  sort2!(8, 13); 
+            sort2!(12, 14); sort2!(2, 4);   sort2!(3, 5);   sort2!(0, 6);   sort2!(8, 10); 
+            sort2!(7, 11);  sort2!(9, 12);  sort2!(13, 14); sort2!(1, 2);   sort2!(0, 3); 
+            sort2!(4, 7);   sort2!(6, 8);   sort2!(5, 9);   sort2!(10, 11); sort2!(12, 13); 
+            sort2!(0, 1);   sort2!(2, 3);   sort2!(4, 6);   sort2!(7, 9);   sort2!(10, 12); 
+            sort2!(11, 13); sort2!(1, 2);   sort2!(3, 5);   sort2!(8, 10);  sort2!(11, 12); 
+            sort2!(3, 4);   sort2!(5, 6);   sort2!(7, 8);   sort2!(9, 10);  sort2!(2, 3); 
+            sort2!(4, 5);   sort2!(6, 7);   sort2!(8, 9);   sort2!(10, 11); sort2!(5, 6); 
             sort2!(7, 8); 
         }
-        16 => unsafe {
-            sort2!(5, 6); sort2!(4, 8); sort2!(9, 10); sort2!(7, 11); sort2!(1, 12); 
-            sort2!(0, 13); sort2!(3, 14); sort2!(2, 15); sort2!(3, 4); sort2!(0, 5); 
-            sort2!(1, 7); sort2!(2, 9); sort2!(11, 12); sort2!(6, 13); sort2!(8, 14); 
-            sort2!(10, 15); sort2!(0, 1); sort2!(2, 3); sort2!(4, 5); sort2!(6, 8); 
-            sort2!(7, 9); sort2!(10, 11); sort2!(12, 13); sort2!(14, 15); sort2!(0, 2); 
-            sort2!(1, 3); sort2!(6, 7); sort2!(8, 9); sort2!(4, 10); sort2!(5, 11); 
-            sort2!(12, 14); sort2!(13, 15); sort2!(1, 2); sort2!(4, 6); sort2!(5, 7); 
-            sort2!(8, 10); sort2!(9, 11); sort2!(3, 12); sort2!(13, 14); sort2!(1, 4); 
-            sort2!(2, 6); sort2!(5, 8); sort2!(7, 10); sort2!(9, 13); sort2!(11, 14); 
-            sort2!(2, 4); sort2!(3, 6); sort2!(9, 12); sort2!(11, 13); sort2!(3, 5); 
-            sort2!(6, 8); sort2!(7, 9); sort2!(10, 12); sort2!(3, 4); sort2!(5, 6); 
-            sort2!(7, 8); sort2!(9, 10); sort2!(11, 12); sort2!(6, 7); sort2!(8, 9); 
+        16 => {
+            sort2!(5, 6);   sort2!(4, 8);   sort2!(9, 10);  sort2!(7, 11);  sort2!(1, 12); 
+            sort2!(0, 13);  sort2!(3, 14);  sort2!(2, 15);  sort2!(3, 4);   sort2!(0, 5); 
+            sort2!(1, 7);   sort2!(2, 9);   sort2!(11, 12); sort2!(6, 13);  sort2!(8, 14); 
+            sort2!(10, 15); sort2!(0, 1);   sort2!(2, 3);   sort2!(4, 5);   sort2!(6, 8); 
+            sort2!(7, 9);   sort2!(10, 11); sort2!(12, 13); sort2!(14, 15); sort2!(0, 2); 
+            sort2!(1, 3);   sort2!(6, 7);   sort2!(8, 9);   sort2!(4, 10);  sort2!(5, 11); 
+            sort2!(12, 14); sort2!(13, 15); sort2!(1, 2);   sort2!(4, 6);   sort2!(5, 7); 
+            sort2!(8, 10);  sort2!(9, 11);  sort2!(3, 12);  sort2!(13, 14); sort2!(1, 4); 
+            sort2!(2, 6);   sort2!(5, 8);   sort2!(7, 10);  sort2!(9, 13);  sort2!(11, 14); 
+            sort2!(2, 4);   sort2!(3, 6);   sort2!(9, 12);  sort2!(11, 13); sort2!(3, 5); 
+            sort2!(6, 8);   sort2!(7, 9);   sort2!(10, 12); sort2!(3, 4);   sort2!(5, 6); 
+            sort2!(7, 8);   sort2!(9, 10);  sort2!(11, 12); sort2!(6, 7);   sort2!(8, 9); 
         }
-        _ => insertion_sort(data, lt),
+        n => unimplemented!("sorting network for size {n} not implemented"),
+    }
+}
+
+pub(crate) fn tinysort<T, F>(data: &mut [T], lt: &mut F)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    match data.len() {
+        0 | 1 => {}
+        len if len <= 16 => sort_at(data, &identity, len, lt),
+        len => {
+            let parts = (len + 15) / 16;
+            for p in 0..parts {
+                let n = (len + parts - p - 1) / parts;
+                sort_at(data, &|i| i * parts + p, n, lt);
+            }
+            insertion_sort(data, lt)
+        }
     }
 }
 
