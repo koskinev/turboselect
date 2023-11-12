@@ -247,7 +247,7 @@ fn tinysort_perf() {
         P: FnMut(usize, &mut WyRng) -> Vec<T> + Copy,
         T: Ord,
     {
-        let lens = [4, 8, 16, 32, 64, 128, 256];
+        let lens = [4, 8, 16, 24, 32, 64];
         let runs = |len: usize| 2_000_000 / ((len as f32).sqrt() as usize);
         let mut rng = WyRng::new(123456789);
 
