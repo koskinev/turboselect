@@ -213,6 +213,9 @@ where
             return None;
         }
     }
+    if order == -1 {
+        data.reverse();
+    }
     Some(nudged)
 }
 
