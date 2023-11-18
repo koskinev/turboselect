@@ -82,8 +82,8 @@ where
     unsafe {
         let ptr = data.as_mut_ptr();
         let swap = lt(&*ptr.add(b), &*ptr.add(a)) as usize;
-        let max = ptr.add(swap * a + (1 - swap) * b);
-        let min = ptr.add(swap * b + (1 - swap) * a);
+        let max = ptr.add(b + swap * a - swap * b); 
+        let min = ptr.add(a + swap * b - swap * a);
         let tmp = max.read();
         ptr.add(a).copy_from(min, 1);
         ptr.add(b).write(tmp);
