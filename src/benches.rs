@@ -291,6 +291,7 @@ fn tinysort_perf() {
     run("random_u32", random_u32s);
     run("sawtooth_u32", sawtooth_u32s);
     run("reversed_u32", reversed_u32s);
+    run("sorted_u32", sorted_u32s);
     run("randomdups_u32", random_dups_u32s);
     run("random_bool", random_bools);
 }
