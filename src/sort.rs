@@ -3,7 +3,7 @@ use core::convert::identity;
 #[inline]
 /// Compares the elements at `a` and `b` and swaps them if `a` is greater than `b`. Returns `true`
 /// if the elements were swapped. Panics if `a` or `b` is out of bounds or `a == b`.
-fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) -> bool
+fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) 
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -18,10 +18,8 @@ where
             };
             ptr.add(a).copy_from(min, 1);
             ptr.add(b).write(max);
-            return swap;
         }
     }
-    false
 }
 
 #[rustfmt::skip]
@@ -163,6 +161,8 @@ where
     }
 }
 
+/// Sorts the slice `data` using the given comparison function `lt`. For slice lengths of 16 or
+/// less, a sorting network is used. For larger slices, a bitonic sorter is used.
 pub(crate) fn tinysort<T, F>(data: &mut [T], lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
@@ -171,18 +171,18 @@ where
         0 | 1 => {}
         len if len <= 16 => sort_at(data, &identity, len, lt),
         len => {
-            let mut size = 16;
-            for chunk in data.chunks_mut(size) {
+            let mut chunk_size = 16;
+            for chunk in data.chunks_mut(chunk_size) {
                 tinysort(chunk, lt);
             }
-            while size < len {
-                size *= 2;
-                for chunk in data.chunks_mut(size) {
-                    let (low, high) = (0, size - 1);
-                    for d in 0..size / 2 {
+            while chunk_size < len {
+                chunk_size *= 2;
+                for chunk in data.chunks_mut(chunk_size) {
+                    let (low, high) = (0, chunk_size - 1);
+                    for d in 0..chunk_size / 2 {
                         sort2(chunk, low + d, high - d, lt);
                     }
-                    let mut part_size = size / 2;
+                    let mut part_size = chunk_size / 2;
                     while part_size > 1 {
                         for part in chunk.chunks_mut(part_size) {
                             let d = part.len().next_power_of_two() / 2;
