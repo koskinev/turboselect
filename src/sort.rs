@@ -1,74 +1,5 @@
 use core::convert::identity;
 
-/// Represents an element that has been removed from the heap, leaving a hole. When dropped, an
-/// `Elem` will fill the hole position with the value that was originally removed.
-pub(crate) struct Elem<'a, T: 'a> {
-    data: &'a mut [T],
-    value: core::mem::MaybeUninit<T>,
-    index: usize,
-}
-
-impl<'a, T> Elem<'a, T> {
-    /// Returns a reference to the element.
-    #[inline]
-    pub(crate) fn as_ref(&self) -> &T {
-        unsafe { self.value.assume_init_ref() }
-    }
-
-    /// Moves the hole to a new location.
-    ///
-    /// Unsafe because self.index must be > 0.
-    #[inline]
-    pub(crate) unsafe fn move_back(&mut self) {
-        debug_assert!(self.index > 0);
-        unsafe {
-            let ptr = self.data.as_mut_ptr().add(self.index);
-            core::ptr::copy_nonoverlapping(ptr.sub(1), ptr, 1);
-        }
-        self.index -= 1;
-    }
-
-    /// Create a new `Elem` from the element at `index`.
-    ///
-    /// Panics if the index is out of bounds.
-    #[inline]
-    pub(crate) fn new(data: &'a mut [T], index: usize) -> Self {
-        assert!(index < data.len());
-        // Safety: we just checked that the index is within the slice.
-        let value = unsafe { core::ptr::read(data.get_unchecked(index)) };
-        Elem {
-            data,
-            value: core::mem::MaybeUninit::new(value),
-            index,
-        }
-    }
-
-    /// Returns a reference to the element before `self.index`.
-    ///
-    /// Unsafe because index must > 0.
-    #[inline]
-    pub(crate) unsafe fn prev(&self) -> &T {
-        debug_assert!(self.index > 0);
-        unsafe { self.data.get_unchecked(self.index - 1) }
-    }
-}
-
-impl<T> Drop for Elem<'_, T> {
-    #[inline]
-    fn drop(&mut self) {
-        // Safety: This fills the hole with the value that was originally removed. The caller must
-        // ensure that hole position is valid.
-        unsafe {
-            let pos = self.index;
-            core::ptr::copy_nonoverlapping(
-                &*self.value.as_ptr(),
-                self.data.get_unchecked_mut(pos),
-                1,
-            );
-        }
-    }
-}
-
 #[inline]
 /// Compares the elements at `a` and `b` and swaps them if `a` is greater than `b`. Returns `true`
 /// if the elements were swapped. Panics if `a` or `b` is out of bounds or `a == b`.
@@ -76,19 +7,21 @@ fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) -> bool
 where
     F: FnMut(&T, &T) -> bool,
 {
-    assert!(a != b);
-    assert!(a < data.len());
-    assert!(b < data.len());
-    unsafe {
+    if b < data.len() && a < b {
         let ptr = data.as_mut_ptr();
-        let swap = lt(&*ptr.add(b), &*ptr.add(a)) as usize;
-        let max = ptr.add(b + swap * a - swap * b); 
-        let min = ptr.add(a + swap * b - swap * a);
-        let tmp = max.read();
-        ptr.add(a).copy_from(min, 1);
-        ptr.add(b).write(tmp);
-        swap != 0
+        unsafe {
+            let swap = lt(&*ptr.add(b), &*ptr.add(a));
+            let (min, max) = if swap {
+                (ptr.add(b), ptr.add(a).read())
+            } else {
+                (ptr.add(a), ptr.add(b).read())
+            };
+            ptr.add(a).copy_from(min, 1);
+            ptr.add(b).write(max);
+            return swap;
+        }
     }
+    false
 }
 
 #[rustfmt::skip]
@@ -97,9 +30,16 @@ where
     F: FnMut(&T, &T) -> bool,
     M: Fn(usize) -> usize,
 {
+    let mut pos: [usize; 16] = [0; 16];
+    for (index, pos) in pos.iter_mut().take(n).enumerate() {
+        let mapped = map(index);
+        assert!(mapped < data.len());
+        *pos = mapped;
+    }
+
     macro_rules! sort2 {
         ($a:expr, $b:expr) => {
-            sort2(data, map($a), map($b), lt);
+            sort2(data, pos[$a], pos[$b], lt);
         };
     }
 
@@ -231,32 +171,29 @@ where
         0 | 1 => {}
         len if len <= 16 => sort_at(data, &identity, len, lt),
         len => {
-            let parts = (len + 15) / 16;
-            for p in 0..parts {
-                let n = (len + parts - p - 1) / parts;
-                sort_at(data, &|i| i * parts + p, n, lt);
+            let mut size = 16;
+            for chunk in data.chunks_mut(size) {
+                tinysort(chunk, lt);
             }
-            insertion_sort(data, lt)
-        }
-    }
-}
-
-pub(crate) fn insertion_sort<T, F>(data: &mut [T], lt: &mut F)
-where
-    F: FnMut(&T, &T) -> bool,
-{
-    let mut index = 1;
-    let end = data.len();
-    while index < end {
-        let mut elem = Elem::new(data, index);
-        while elem.index > 0 {
-            // Safety: elem.prev() and elem.move_back() require that elem.index > 0, which is
-            // guaranteed by the loop condition.
-            if unsafe { !lt(elem.as_ref(), elem.prev()) } {
-                break;
+            while size < len {
+                size *= 2;
+                for chunk in data.chunks_mut(size) {
+                    let (low, high) = (0, size - 1);
+                    for d in 0..size / 2 {
+                        sort2(chunk, low + d, high - d, lt);
+                    }
+                    let mut part_size = size / 2;
+                    while part_size > 1 {
+                        for part in chunk.chunks_mut(part_size) {
+                            let d = part.len().next_power_of_two() / 2;
+                            for (low, high) in (0..d).map(|i| (i, i + d)) {
+                                sort2(part, low, high, lt);
+                            }
+                        }
+                        part_size /= 2;
+                    }
+                }
             }
-            unsafe { elem.move_back() };
         }
-        index += 1;
     }
 }
