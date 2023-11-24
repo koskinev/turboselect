@@ -1,13 +1,11 @@
 #[cfg(feature = "std")]
 extern crate std;
 
-use core::convert::identity;
 use std::{io::Write, println, vec::Vec};
 
 use crate::{
     choose_pivot, partition_at, partition_equal_min, sample, select, select_nth_unstable,
-    sort::{sort_at, tinysort},
-    wyrand::WyRng,
+    sort::tinysort, wyrand::WyRng,
 };
 
 #[test]
@@ -337,8 +335,7 @@ fn sorts() {
         let mut rng = WyRng::new(0);
         for _iter in 0..repeat {
             let mut data: Vec<_> = iter_rng(&mut rng, N, N).collect();
-            // Todo: safety
-            sort_at(&mut data, &identity, N, &mut usize::lt);
+            tinysort(&mut data, &mut usize::lt);
             for i in 1..N {
                 assert!(data[i - 1] <= data[i]);
             }
