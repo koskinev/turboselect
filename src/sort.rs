@@ -1,17 +1,14 @@
-use core::convert::identity;
-
 #[inline]
 /// Compares the elements at `a` and `b` and swaps them if `a` is greater than `b`. Returns `true`
 /// if the elements were swapped. Panics if `a` or `b` is out of bounds or `a == b`.
-fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F) 
+fn sort2<T, F>(data: &mut [T], a: usize, b: usize, lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
     if b < data.len() && a < b {
         let ptr = data.as_mut_ptr();
         unsafe {
-            let swap = lt(&*ptr.add(b), &*ptr.add(a));
-            let (min, max) = if swap {
+            let (min, max) = if lt(&*ptr.add(b), &*ptr.add(a)) {
                 (ptr.add(b), ptr.add(a).read())
             } else {
                 (ptr.add(a), ptr.add(b).read())
@@ -23,25 +20,17 @@ where
 }
 
 #[rustfmt::skip]
-pub(crate) fn sort_at<T, M, F>(data: &mut [T], map: &M, n: usize, lt: &mut F)
+fn sort<T, F, const N: usize>(data: &mut [T], lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
-    M: Fn(usize) -> usize,
 {
-    let mut pos: [usize; 16] = [0; 16];
-    for (index, pos) in pos.iter_mut().take(n).enumerate() {
-        let mapped = map(index);
-        assert!(mapped < data.len());
-        *pos = mapped;
-    }
-
     macro_rules! sort2 {
         ($a:expr, $b:expr) => {
-            sort2(data, pos[$a], pos[$b], lt);
+            sort2(data, $a, $b, lt);
         };
     }
 
-    match n {
+    match N {
         0 | 1 => {}
         2 => { sort2!(0, 1); }
         3 => { sort2!(0, 2); sort2!(0, 1); sort2!(1, 2); }
@@ -169,7 +158,21 @@ where
 {
     match data.len() {
         0 | 1 => {}
-        len if len <= 16 => sort_at(data, &identity, len, lt),
+        2 => sort2(data, 0, 1, lt),
+        3 => sort::<_, _, 3>(data, lt),
+        4 => sort::<_, _, 4>(data, lt),
+        5 => sort::<_, _, 5>(data, lt),
+        6 => sort::<_, _, 6>(data, lt),
+        7 => sort::<_, _, 7>(data, lt),
+        8 => sort::<_, _, 8>(data, lt),
+        9 => sort::<_, _, 9>(data, lt),
+        10 => sort::<_, _, 10>(data, lt),
+        11 => sort::<_, _, 11>(data, lt),
+        12 => sort::<_, _, 12>(data, lt),
+        13 => sort::<_, _, 13>(data, lt),
+        14 => sort::<_, _, 14>(data, lt),
+        15 => sort::<_, _, 15>(data, lt),
+        16 => sort::<_, _, 16>(data, lt),
         len => {
             let mut chunk_size = 16;
             for chunk in data.chunks_mut(chunk_size) {
@@ -178,16 +181,15 @@ where
             while chunk_size < len {
                 chunk_size *= 2;
                 for chunk in data.chunks_mut(chunk_size) {
-                    let (low, high) = (0, chunk_size - 1);
                     for d in 0..chunk_size / 2 {
-                        sort2(chunk, low + d, high - d, lt);
+                        sort2(chunk, d, chunk_size - d - 1, lt);
                     }
                     let mut part_size = chunk_size / 2;
                     while part_size > 1 {
                         for part in chunk.chunks_mut(part_size) {
                             let d = part.len().next_power_of_two() / 2;
-                            for (low, high) in (0..d).map(|i| (i, i + d)) {
-                                sort2(part, low, high, lt);
+                            for i in 0..d {
+                                sort2(part, i, i + d, lt);
                             }
                         }
                         part_size /= 2;

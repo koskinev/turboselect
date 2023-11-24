@@ -22,7 +22,7 @@ use core::{
     ptr,
 };
 use math::{ceil, lerp, sqrt};
-use sort::{sort_at, tinysort};
+use sort::tinysort;
 use wyrand::WyRng;
 
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
@@ -162,34 +162,34 @@ where
 {
     // Calculate:
     // - `k`: sample index corresponding to the pivot location.
-    // - `g`: first element of the `N`-element group where the pivot is located.
+    // - `g`: index of the `N` element group where the pivot is located.
     let len = data.len();
-    let k = ((N * N * index) / len) as isize;
-    let g = k - k % N as isize;
+    let k = (N * N * index) / len;
+    let g = k / N;
 
-    // Take the sample
+    // Take the sample and sort the groups
     let sample = sample(data, N * N, rng);
-
-    for j in 0..N {
-        sort_at(sample, &|i| j + N * i, N, lt);
+    for chunk in sample.chunks_mut(N) {
+        tinysort(chunk, lt);
     }
 
-    // Sort the group where the pivot is located.
-    sort_at(sample, &|i| g as usize + i, N, lt);
-
-    // Calculate:
-    // - `o`: pivot's offset from the group median, scaled by 2 to keep the pivot near the median.
-    // - `p`: pivot's index
-    let o = (k - g - (N / 2) as isize) / 2;
+    // Move the `g`th elements of each group to the beginning of the slice.
+    // Then sort the first `N` elements.
+    for j in 0..N {
+        sample.swap(j, g + N * j);
+    }
+    tinysort(&mut sample[..N], lt);
     let p = if index.abs_diff(len / 2) > len / 5 {
-        (g + o + (N / 2) as isize) as usize
+        (N / 2 + k % N) / 2
     } else {
-        g as usize + N / 2
+        N / 2
     };
 
     // Compare the pivot with the first element of the group. If they are equal, the pivot is
     // likely to have many duplicates.
-    let is_repeated = ge!(&data[g as usize], &data[p], lt);
+    let is_repeated = sample[p.saturating_sub(1)..(p + 1).min(N - 1)]
+        .windows(2)
+        .any(|w| ge!(&w[0], &w[1], lt));
     (p, is_repeated)
 }
 
