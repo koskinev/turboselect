@@ -174,28 +174,71 @@ where
         15 => sort::<_, _, 15>(data, lt),
         16 => sort::<_, _, 16>(data, lt),
         len => {
-            let mut chunk_size = 16;
-            for chunk in data.chunks_mut(chunk_size) {
-                tinysort(chunk, lt);
-            }
-            while chunk_size < len {
-                chunk_size *= 2;
-                for chunk in data.chunks_mut(chunk_size) {
-                    for d in 0..chunk_size / 2 {
-                        sort2(chunk, d, chunk_size - d - 1, lt);
-                    }
-                    let mut part_size = chunk_size / 2;
-                    while part_size > 1 {
-                        for part in chunk.chunks_mut(part_size) {
-                            let d = part.len().next_power_of_two() / 2;
-                            for i in 0..d {
-                                sort2(part, i, i + d, lt);
-                            }
-                        }
-                        part_size /= 2;
-                    }
+            let mut size = 16;
+            data.chunks_mut(size).for_each(|chunk| tinysort(chunk, lt));
+            while size < len {
+                size *= 2;
+                for chunk in data.chunks_mut(size) {
+                    merge(chunk, lt);
                 }
             }
         }
+    }
+}
+
+fn merge<T, F>(chunk: &mut [T], lt: &mut F)
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    let size = chunk.len().next_power_of_two();
+    let half = size / 2;
+    for delta in 0..half {
+        sort2(chunk, delta, size - delta - 1, lt);
+    }
+    let mut part = half;
+    while part > 16 {
+        for inner in chunk.chunks_mut(part) {
+            for index in 0..(part / 2) {
+                sort2(inner, index, index + (part / 2), lt);
+            }
+        }
+        part /= 2;
+    }
+    for inner in chunk.chunks_mut(16) {
+        sort2(inner, 0, 8, lt);
+        sort2(inner, 1, 9, lt);
+        sort2(inner, 2, 10, lt);
+        sort2(inner, 3, 11, lt);
+        sort2(inner, 4, 12, lt);
+        sort2(inner, 5, 13, lt);
+        sort2(inner, 6, 14, lt);
+        sort2(inner, 7, 15, lt);
+
+        sort2(inner, 0, 4, lt);
+        sort2(inner, 1, 5, lt);
+        sort2(inner, 2, 6, lt);
+        sort2(inner, 3, 7, lt);
+        sort2(inner, 8, 12, lt);
+        sort2(inner, 9, 13, lt);
+        sort2(inner, 10, 14, lt);
+        sort2(inner, 11, 15, lt);
+
+        sort2(inner, 0, 2, lt);
+        sort2(inner, 1, 3, lt);
+        sort2(inner, 4, 6, lt);
+        sort2(inner, 5, 7, lt);
+        sort2(inner, 8, 10, lt);
+        sort2(inner, 9, 11, lt);
+        sort2(inner, 12, 14, lt);
+        sort2(inner, 13, 15, lt);
+
+        sort2(inner, 0, 1, lt);
+        sort2(inner, 2, 3, lt);
+        sort2(inner, 4, 5, lt);
+        sort2(inner, 6, 7, lt);
+        sort2(inner, 8, 9, lt);
+        sort2(inner, 10, 11, lt);
+        sort2(inner, 12, 13, lt);
+        sort2(inner, 14, 15, lt);
     }
 }
