@@ -763,7 +763,7 @@ where
         }
     }
 
-    while data.len() > 16 {
+    while data.len() > 24 {
         let (u, v) = match index {
             0 => select_min(data, lt),
             i if i == data.len() - 1 => select_max(data, lt),
