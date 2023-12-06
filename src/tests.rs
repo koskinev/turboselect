@@ -354,7 +354,7 @@ fn tinysorts() {
     let repeat = 1;
 
     let mut rng = WyRng::new(123);
-    let max_count = 64;
+    let max_count = 512;
     for _iter in 0..repeat {
         let count = rng.bounded_usize(1, max_count);
         let mut data: Vec<usize> = (0..count).collect();
