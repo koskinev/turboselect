@@ -22,26 +22,26 @@ The implementation relies heavily on unsafe code and is currently not thoroughly
  
 | slice length | index      | throughput | baseline | ratio |
 | ------------ | ---------- | ---------- | -------- | ----- |
-| 1 000        | 1          | 1249.153   | 661.467  | 1.888 |
-| 1 000        | 50         | 899.107    | 608.198  | 1.478 |
-| 1 000        | 500        | 628.416    | 546.771  | 1.149 |
-| 10 000       | 10         | 2175.853   | 919.347  | 2.367 |
-| 10 000       | 500        | 1396.770   | 882.031  | 1.584 |
-| 10 000       | 5 000      | 979.494    | 754.819  | 1.298 |
-| 100 000      | 100        | 2617.018   | 960.814  | 2.724 |
-| 100 000      | 5 000      | 1805.564   | 931.358  | 1.939 |
-| 100 000      | 50 000     | 1205.500   | 793.645  | 1.519 |
-| 1 000 000    | 1 000      | 2713.383   | 953.882  | 2.845 |
-| 1 000 000    | 50 000     | 2060.831   | 932.977  | 2.209 |
-| 1 000 000    | 500 000    | 1322.733   | 797.267  | 1.659 |
-| 10 000 000   | 10 000     | 2397.961   | 924.765  | 2.593 |
-| 10 000 000   | 500 000    | 1997.528   | 905.618  | 2.206 |
-| 10 000 000   | 5 000 000  | 1289.671   | 769.359  | 1.676 |
-| 100 000 000  | 100 000    | 2753.677   | 903.986  | 3.046 |
-| 100 000 000  | 5 000 000  | 1664.166   | 833.201  | 1.997 |
-| 100 000 000  | 50 000 000 | 1315.275   | 720.552  | 1.825 |
-  
-The comparison was run on a Ryzen 5800H with pseudorandom `u32`s used as input. Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. Similar tests were run with sawtooth, sorted and reverse sorted inputs, as well as pseudorandom `u32`s with many duplicates, and pseudorandom booleans. Turboselect outperformed Quickselect in all cases where the input had at least 100 000 elements. Turboselect may be slower than Quickselect for smaller presorted, reversed and sawtooth inputs.
+| 1 000        | 1          | 1531.950   | 688.425  | 2.225 |
+| 1 000        | 50         | 998.416    | 634.128  | 1.574 |
+| 1 000        | 500        | 732.327    | 577.630  | 1.268 |
+| 10 000       | 10         | 2426.299   | 972.833  | 2.494 |
+| 10 000       | 500        | 1482.766   | 922.714  | 1.607 |
+| 10 000       | 5 000      | 1030.206   | 796.879  | 1.293 |
+| 100 000      | 100        | 2760.916   | 1028.961 | 2.683 |
+| 100 000      | 5 000      | 1850.204   | 985.648  | 1.877 |
+| 100 000      | 50 000     | 1226.131   | 837.307  | 1.464 |
+| 1 000 000    | 1 000      | 2784.227   | 1007.112 | 2.765 |
+| 1 000 000    | 50 000     | 2077.787   | 985.759  | 2.108 |
+| 1 000 000    | 500 000    | 1348.236   | 849.208  | 1.588 |
+| 10 000 000   | 10 000     | 2624.036   | 991.049  | 2.648 |
+| 10 000 000   | 500 000    | 2170.388   | 990.302  | 2.192 |
+| 10 000 000   | 5 000 000  | 1352.183   | 822.061  | 1.645 |
+| 100 000 000  | 100 000    | 3133.058   | 982.153  | 3.190 |
+| 100 000 000  | 5 000 000  | 1877.348   | 957.386  | 1.961 |
+| 100 000 000  | 50 000 000 | 1412.512   | 807.921  | 1.748 |
+
+The comparison was run on a Ryzen 5800H with pseudorandom `u32`s used as input. Throughput is calculated as millions of elements per second, i.e `data.len() * runs / seconds`. Similar tests were run with sawtooth, sorted and reverse sorted inputs, as well as pseudorandom `u32`s with many duplicates, and pseudorandom booleans. Turboselect outperformed Quickselect in all cases, except for selecting the 250th and the median element from 1000 element sawtooth input.
 
 See [this table](bench_results.md) for full results.
 
