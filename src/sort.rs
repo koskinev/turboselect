@@ -20,7 +20,7 @@ where
 }
 
 #[rustfmt::skip]
-fn sort<T, F, const N: usize>(data: &mut [T], lt: &mut F)
+fn network_sort<T, F, const N: usize>(data: &mut [T], lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -159,20 +159,20 @@ where
     match data.len() {
         0 | 1 => {}
         2 => sort2(data, 0, 1, lt),
-        3 => sort::<_, _, 3>(data, lt),
-        4 => sort::<_, _, 4>(data, lt),
-        5 => sort::<_, _, 5>(data, lt),
-        6 => sort::<_, _, 6>(data, lt),
-        7 => sort::<_, _, 7>(data, lt),
-        8 => sort::<_, _, 8>(data, lt),
-        9 => sort::<_, _, 9>(data, lt),
-        10 => sort::<_, _, 10>(data, lt),
-        11 => sort::<_, _, 11>(data, lt),
-        12 => sort::<_, _, 12>(data, lt),
-        13 => sort::<_, _, 13>(data, lt),
-        14 => sort::<_, _, 14>(data, lt),
-        15 => sort::<_, _, 15>(data, lt),
-        16 => sort::<_, _, 16>(data, lt),
+        3 => network_sort::<_, _, 3>(data, lt),
+        4 => network_sort::<_, _, 4>(data, lt),
+        5 => network_sort::<_, _, 5>(data, lt),
+        6 => network_sort::<_, _, 6>(data, lt),
+        7 => network_sort::<_, _, 7>(data, lt),
+        8 => network_sort::<_, _, 8>(data, lt),
+        9 => network_sort::<_, _, 9>(data, lt),
+        10 => network_sort::<_, _, 10>(data, lt),
+        11 => network_sort::<_, _, 11>(data, lt),
+        12 => network_sort::<_, _, 12>(data, lt),
+        13 => network_sort::<_, _, 13>(data, lt),
+        14 => network_sort::<_, _, 14>(data, lt),
+        15 => network_sort::<_, _, 15>(data, lt),
+        16 => network_sort::<_, _, 16>(data, lt),
         len => {
             let mut size = 16;
             data.chunks_mut(size).for_each(|chunk| tinysort(chunk, lt));
@@ -190,19 +190,17 @@ fn merge<T, F>(chunk: &mut [T], lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
-    let size = chunk.len().next_power_of_two();
-    let half = size / 2;
-    for delta in 0..half {
+    let mut size = chunk.len().next_power_of_two();
+    for delta in 0..size / 2 {
         sort2(chunk, delta, size - delta - 1, lt);
     }
-    let mut part = half;
-    while part > 16 {
-        for inner in chunk.chunks_mut(part) {
-            for index in 0..(part / 2) {
-                sort2(inner, index, index + (part / 2), lt);
+    while size > 32 {
+        size /= 2;
+        for inner in chunk.chunks_mut(size) {
+            for index in 0..(size / 2) {
+                sort2(inner, index, index + (size / 2), lt);
             }
         }
-        part /= 2;
     }
     for inner in chunk.chunks_mut(16) {
         sort2(inner, 0, 8, lt);
