@@ -146,7 +146,7 @@ fn nth() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        select(&mut data, index, rng.as_mut(), &mut usize::lt);
+        select(&mut data, index, &mut usize::lt);
         let nth = &data[index];
         data.iter().enumerate().for_each(|(i, elem)| match i {
             i if i < index && elem > nth => panic!("{} > {} at {}", elem, nth, i),
@@ -172,7 +172,7 @@ fn nth_small() {
 
         let mut data: Vec<_> = (0..count).map(|_| rng.bounded_usize(0, high)).collect();
         let index = rng.bounded_usize(0, count);
-        select(&mut data, index, &mut rng, &mut usize::lt);
+        select(&mut data, index, &mut usize::lt);
         let nth = data[index];
         assert!(data[..index].iter().all(|elem| elem <= &nth));
         assert!(data[index..].iter().all(|elem| elem >= &nth));
@@ -187,14 +187,8 @@ fn pivots() {
     let max = 100_000;
     let repeat = 10_000;
 
-    fn record(
-        mut data: Vec<usize>,
-        index: usize,
-        rng: &mut WyRng,
-        total_cost: &mut f64,
-        results: &mut Vec<u8>,
-    ) {
-        let (p, _) = choose_pivot(&mut data, index, rng, &mut usize::lt);
+    fn record(mut data: Vec<usize>, index: usize, total_cost: &mut f64, results: &mut Vec<u8>) {
+        let (p, _) = choose_pivot(&mut data, index, &mut usize::lt);
         let (u, v) = partition_at(&mut data, p, &mut usize::lt);
         let count = data.len();
         let cost = if index < u {
@@ -227,28 +221,24 @@ fn pivots() {
         record(
             ptn_shuffled(count, &mut rng),
             index,
-            &mut rng,
             &mut total_cost,
             &mut results,
         );
         record(
             ptn_sawtooth(count, &mut rng),
             index,
-            &mut rng,
             &mut total_cost,
             &mut results,
         );
         record(
             ptn_sorted(count, &mut rng),
             index,
-            &mut rng,
             &mut total_cost,
             &mut results,
         );
         record(
             ptn_mostlysorted(count, &mut rng),
             index,
-            &mut rng,
             &mut total_cost,
             &mut results,
         );
@@ -309,7 +299,7 @@ fn sample_n() {
     for _iter in 0..repeat {
         let count = rng.bounded_usize(1, len + 1);
         let mut data: Vec<_> = (0..len).collect();
-        sample(data.as_mut_slice(), count, rng.as_mut());
+        sample(data.as_mut_slice(), count);
         for i in 0..len {
             assert!(data.contains(&i));
         }

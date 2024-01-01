@@ -13,6 +13,8 @@ mod sort;
 #[cfg(feature = "std")]
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
 mod wyrand;
 
 use core::{
@@ -23,7 +25,6 @@ use core::{
 };
 use math::{ceil, lerp, sqrt};
 use sort::tinysort;
-use wyrand::WyRng;
 
 /// Represents an element removed from a slice. When dropped, copies the value into `dst`.
 struct Elem<T> {
@@ -120,22 +121,22 @@ impl From<isize> for SortOrder {
 /// Selects the pivot element for partitioning the slice. Returns `(p, is_repeated)` where `p` is
 /// the index of the pivot element and `is_repeated` is a boolean indicating if the pivot is likely
 /// to have many duplicates.
-fn choose_pivot<T, F>(data: &mut [T], index: usize, rng: &mut WyRng, lt: &mut F) -> (usize, bool)
+fn choose_pivot<T, F>(data: &mut [T], index: usize, lt: &mut F) -> (usize, bool)
 where
     F: FnMut(&T, &T) -> bool,
 {
     match data.len() {
         // For relatively small slices, we use a `kth-of-nths` strategy.
-        len if len <= 256 => kth_of_nths::<3, _, _>(data, index, rng, lt),
-        len if len <= 1024 => kth_of_nths::<5, _, _>(data, index, rng, lt),
-        len if len <= 4096 => kth_of_nths::<7, _, _>(data, index, rng, lt),
+        len if len <= 256 => kth_of_nths::<3, _, _>(data, index, lt),
+        len if len <= 1024 => kth_of_nths::<5, _, _>(data, index, lt),
+        len if len <= 4096 => kth_of_nths::<7, _, _>(data, index, lt),
         // Larger slices benefit from more accurate pivot selection.
         len => {
             const ALPHA: f64 = 0.75;
             let count = ceil(ALPHA * sqrt(len as f64)) as usize;
             let index = nudge(index, len);
             let k = (count * index) / len;
-            select(sample(data, count, rng), k, rng, lt);
+            select(sample(data, count), k, lt);
             let is_repeated = match k {
                 0 => ge!(&data[k], &data[k + 1], lt),
                 k if k == count - 1 => ge!(&data[k - 1], &data[k], lt),
@@ -151,12 +152,7 @@ where
 /// beginning of the slice. Then sorts `N` groups of `N` elements in the sample, each `N` elements
 /// apart. Finally, sorts the group where the pivot is located. Returns `(p, n)` where `p` is
 /// the index of the selected pivot and `n` is the number of elements in the group.
-fn kth_of_nths<const N: usize, T, F>(
-    data: &mut [T],
-    index: usize,
-    rng: &mut WyRng,
-    lt: &mut F,
-) -> (usize, bool)
+fn kth_of_nths<const N: usize, T, F>(data: &mut [T], index: usize, lt: &mut F) -> (usize, bool)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -168,7 +164,7 @@ where
     let g = k / N;
 
     // Take the sample and sort the groups
-    let sample = sample(data, N * N, rng);
+    let sample = sample(data, N * N);
     for chunk in sample.chunks_mut(N) {
         tinysort(chunk, lt);
     }
@@ -193,30 +189,46 @@ where
     (p, is_repeated)
 }
 
-/// Checks if the slice is likely to be sorted in ascending or descending order. Returns `None` if
-/// the slice is not sorted. Otherwise, returns `Some(index)` where `index` is the index of the
-/// pivot element.
-fn detect_sorted<T, F>(data: &mut [T], index: usize, rng: &mut WyRng, lt: &mut F) -> Option<usize>
+fn is_sorted<T, F>(data: &[T], lt: &mut F) -> bool
 where
     F: FnMut(&T, &T) -> bool,
 {
-    const SAMPLE: usize = 24;
-    let nudged = nudge(index, data.len());
-    let mut order = 0;
-    for _ in 0..SAMPLE {
-        let r = rng.bounded_usize(0, data.len());
-        let (x, y) = (r.min(nudged), r.max(nudged));
-        let next = lt(&data[x], &data[y]) as isize - lt(&data[y], &data[x]) as isize;
-        if order == 0 {
-            order = next;
-        } else if order != next {
-            return None;
+    const BLOCK: usize = 32;
+    let mut stopped = false;
+    let mut a = data.as_ptr();
+    let mut count = data.len() - 1;
+    while count > BLOCK {
+        for _ in 0..BLOCK {
+            stopped |= unsafe { lt(&*a.add(1), &*a) };
+            a = unsafe { a.add(1) };
         }
+        if stopped {
+            return false;
+        }
+        count -= BLOCK;
     }
-    if order == -1 {
-        data.reverse();
+    while count > 0 && unsafe { !lt(&*a.add(1), &*a) } {
+        a = unsafe { a.add(1) };
+        count -= 1;
     }
-    Some(nudged)
+    count == 0
+}
+
+fn detect_order<T, F>(data: &[T], lt: &mut F) -> Option<Ordering>
+where
+    F: FnMut(&T, &T) -> bool,
+{
+    if data.is_empty() {
+        return None;
+    }
+
+    if is_sorted(data, lt) {
+        Some(Ordering::Greater)
+    } else if is_sorted(data, &mut |a, b| lt(b, a)) {
+        Some(Ordering::Less)
+    } else {
+        None
+    }
 }
 
 fn nudge(index: usize, len: usize) -> usize {
@@ -256,29 +268,29 @@ where
     // This ensures that the index is in bounds.
     data.swap(0, index);
 
-    let (head, tail) = data.split_first_mut().unwrap();
+    let (elem, tail) = data.split_first_mut().unwrap();
     let (u, mut v);
     {
         // Read the pivot into the stack. The read below is safe, because the pivot is the first
         // element in the slice.
-        let pivot = unsafe { Elem::new(head) };
+        let pivot = unsafe { Elem::new(elem) };
 
         // Find the positions of the first pair of out-of-order elements.
+        let ptr = tail.as_ptr();
         let (mut l, mut r) = (0, tail.len());
-        unsafe {
-            // SAFETY: The calls to get_unchecked are safe, because the slice is non-empty and we
-            // ensure that `l <= r`.
-            while l < r && lt(tail.get_unchecked(l), &*pivot) {
-                l += 1;
-            }
-            while l < r && ge!(tail.get_unchecked(r - 1), &*pivot, lt) {
-                r -= 1;
-            }
+
+        // SAFETY: The calls to get_unchecked are safe, because the slice is non-empty and we
+        // ensure that `l <= r`.
+        while l < r && unsafe { lt(&*ptr.add(l), &*pivot) } {
+            l += 1;
+        }
+        while l < r && unsafe { ge!(&*ptr.add(r - 1), &*pivot, lt) } {
+            r -= 1;
         }
         u = l + partition_in_blocks(&mut tail[l..r], &*pivot, lt);
         v = u;
         // Scan the elements after the pivot until we find one that is greater than the pivot.
-        while v < tail.len() && unsafe { le!(tail.get_unchecked(v), &*pivot, lt) } {
+        while v < tail.len() && unsafe { le!(&*ptr.add(v), &*pivot, lt) } {
             v += 1;
         }
     }
@@ -680,33 +692,26 @@ where
     }
 }
 
-/// Samples `count` elements randomly and places them into the beginning of the slice. Returns the
-/// sample as a slice. Panics if `count > data.len()` or `data.len() == 0`.
-fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T] {
-    let len = data.len();
-    assert!(count <= len);
-    assert!(len > 0);
+/// Samples `count` elements evenly and places them into the beginning of the slice. Returns the
+/// sampled elements as a slice. Panics if `data.len() / (count + 1) == 0`.
+fn sample<T>(data: &mut [T], count: usize) -> &mut [T] {
+    let step = data.len() / count;
+    assert!(step > 0);
     unsafe {
         let ptr = data.as_mut_ptr();
         // Read the first element into a temporary location.
         // SAFETY: The read is safe because `ptr` points to the first element of `data` and `data`
         // is non-empty.
         let tmp = ManuallyDrop::new(ptr::read(ptr));
-        // Select a random element and swap it with the first element.
-        // SAFETY: `src` is in bounds, because `rng.bounded_usize(0, len)` returns a value in the
-        // range `[0, len)`.
-        let (mut src, mut dst) = (ptr.add(rng.bounded_usize(0, len)), ptr);
-        // Copy the element at `src` to `dst`.
-        // SAFETY: The copy is safe, because `src` and `dst` are in bounds.
-        ptr::copy(src, dst, 1);
-        // Continue until `count` elements have been samples.
-        for i in 1..count {
+        let (mut src, mut dst) = (ptr, ptr);
+
+        for _ in 1..count {
             // Select the next element.
             // SAFETY: This is safe since `count <= len`.
             dst = dst.add(1);
             // SAFETY: See above for why this is safe.
             ptr::copy(dst, src, 1);
-            src = ptr.add(rng.bounded_usize(i, len));
+            src = src.add(step);
             ptr::copy(src, dst, 1);
         }
         // Write the temporary element (i.e the original first element) to the last sampled
@@ -721,7 +726,7 @@ fn sample<'a, T>(data: &'a mut [T], count: usize, rng: &mut WyRng) -> &'a mut [T
 /// and elements in `data[index..]` are greater than or equal to the pivot.
 ///
 /// Panics if `index >= data.len()`.
-fn select<T, F>(mut data: &mut [T], mut index: usize, rng: &mut WyRng, lt: &mut F)
+fn select<T, F>(mut data: &mut [T], mut index: usize, lt: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -755,12 +760,10 @@ where
     // If the slice is likely to be sorted, try partitioning with the pivot at the index (ascending)
     // or slightly before the corresponding index from the back (descending).
     let mut previous_pivot = None;
-    if let Some(p) = detect_sorted(data, index, rng, lt) {
-        let (u, v) = partition_at(data, p, lt);
-        match descend(data, index, u, v, previous_pivot) {
-            ControlFlow::Continue(result) => (data, index, previous_pivot) = result,
-            ControlFlow::Break(_) => return,
-        }
+    match detect_order(data, lt) {
+        Some(Ordering::Greater) => return,
+        Some(Ordering::Less) => return data.reverse(),
+        _ => {}
     }
 
     while data.len() > 24 {
@@ -768,7 +771,7 @@ where
             0 => select_min(data, lt),
             i if i == data.len() - 1 => select_max(data, lt),
             _ => {
-                let (p, is_repeated) = choose_pivot(data, index, rng, lt);
+                let (p, is_repeated) = choose_pivot(data, index, lt);
                 match previous_pivot {
                     // Test if the selected pivot is equal to a previous pivot from the left. In
                     // this case we know that the pivot is the minimum of the current slice.
@@ -982,20 +985,12 @@ where
         return split_partition(data, index);
     }
 
-    #[cfg(not(debug_assertions))]
-    // Use the address of the last element as the seed for the random number generator.
-    let seed = data.as_mut_ptr() as u64 + data.len() as u64;
-
-    #[cfg(debug_assertions)]
-    let seed = 12345678901234567890;
-
-    let mut rng = WyRng::new(seed);
     if index == 0 {
         select_min(data, &mut T::lt);
     } else if index == data.len() - 1 {
         select_max(data, &mut T::lt);
     } else {
-        select(data, index, rng.as_mut(), &mut T::lt);
+        select(data, index, &mut T::lt);
     }
     split_partition(data, index)
 }
@@ -1058,14 +1053,6 @@ where
         return split_partition(data, index);
     }
 
-    #[cfg(not(debug_assertions))]
-    // Use the address of the last element as the seed for the random number generator.
-    let seed = data.as_mut_ptr() as u64 + data.len() as u64;
-
-    #[cfg(debug_assertions)]
-    let seed = 12345678901234567890;
-
-    let mut rng = WyRng::new(seed);
     let mut lt = |x: &T, y: &T| compare(x, y) == Ordering::Less;
 
     if index == 0 {
@@ -1073,7 +1060,7 @@ where
     } else if index == data.len() - 1 {
         select_max(data, &mut lt);
     } else {
-        select(data, index, rng.as_mut(), &mut lt);
+        select(data, index, &mut lt);
     }
     split_partition(data, index)
 }
@@ -1137,14 +1124,6 @@ where
         return split_partition(data, index);
     }
 
-    #[cfg(not(debug_assertions))]
-    // Use the address of the last element as the seed for the random number generator.
-    let seed = data.as_mut_ptr() as u64 + data.len() as u64;
-
-    #[cfg(debug_assertions)]
-    let seed = 12345678901234567890;
-
-    let mut rng = WyRng::new(seed);
     let mut lt = |x: &T, y: &T| f(x).lt(&f(y));
 
     if index == 0 {
@@ -1152,7 +1131,7 @@ where
     } else if index == data.len() - 1 {
         select_max(data, &mut lt);
     } else {
-        select(data, index, rng.as_mut(), &mut lt);
+        select(data, index, &mut lt);
     }
     split_partition(data, index)
 }
@@ -1260,7 +1239,7 @@ fn split_partition<T>(data: &mut [T], index: usize) -> (&mut [T], &mut T, &mut [
 }
 
 // Returns the number of elements between pointers `l` (inclusive) and `r` (exclusive).
-fn width<T>(l: *mut T, r: *mut T) -> usize {
+fn width<T>(l: *const T, r: *const T) -> usize {
     assert!(mem::size_of::<T>() > 0);
     // SAFETY: This is a helper function, refer to the usage of `ptr::offset_from` for
     // safety.
